@@ -2,7 +2,7 @@
 
 Professional crypto trading and quantitative research platform.
 
-> **Phases 0, 2 and 3 (backend) of 10 — foundation, market data, scanner.**
+> **Phases 0, 2 and 3 of 10 — foundation, market data, scanner, terminal.**
 > This build places **no orders in any mode**. It has no database, no
 > strategies and no trading engines. What exists is the foundation
 > (configuration, exact money arithmetic, data provenance, the error and risk
@@ -84,13 +84,19 @@ See [docs/exchange.md](docs/exchange.md) for the exchange layer in detail.
 ## Quick start
 
 ```bash
+# backend
 cd backend
 python -m venv .venv
 .venv/Scripts/python.exe -m pip install -e ".[dev]"
 .venv/Scripts/python.exe -m uvicorn aetheris.main:app --reload
+
+# terminal (second shell)
+cd frontend
+pnpm install
+pnpm dev
 ```
 
-Then open http://127.0.0.1:8000/docs
+API docs at http://127.0.0.1:8000/docs, terminal at http://localhost:3000
 
 Full instructions: [docs/setup.md](docs/setup.md).
 
@@ -106,7 +112,10 @@ backend/           FastAPI service (Python 3.12+)
     engines/       strategy, risk, backtest, paper, order (phase 4+)
   tests/           unit + integration
 docs/              architecture, setup, ADRs
-frontend/          Next.js terminal                       (phase 3)
+frontend/          Next.js terminal (read-only)
+  src/app/         markets · scanner routes
+  src/components/  chart, table, search, data states
+  src/lib/         typed API client, formatting, polling hook
 ```
 
 ## Documentation
@@ -117,12 +126,14 @@ frontend/          Next.js terminal                       (phase 3)
   freshness, caching, rate limiting, error codes
 - [Scanner](docs/scanner.md) — bounded scanning, candle statistics, the
   Market Opportunity Score and what it is not
+- [Terminal](docs/terminal.md) — frontend stack, data states, responsive
+  behaviour, API contract safety
 - [Setup](docs/setup.md) — environment, commands, quality gates
 - [ADRs](docs/adr/) — recorded decisions, including the open database question
 
 ## Quality gates
 
-Every phase must pass all four before it is called complete:
+Every phase must pass all of these before it is called complete:
 
 ```bash
 cd backend
@@ -130,6 +141,12 @@ cd backend
 .venv/Scripts/python.exe -m ruff check .
 .venv/Scripts/python.exe -m ruff format --check .
 .venv/Scripts/python.exe -m mypy
+
+cd ../frontend
+pnpm lint
+pnpm typecheck
+pnpm test
+pnpm build
 ```
 
 ## Roadmap
@@ -139,7 +156,7 @@ cd backend
 | 0 | Repository and architecture foundation | **complete** |
 | 1 | Authentication, database, configuration | blocked — see ADR 0002 |
 | 2 | Exchange abstraction, Binance Futures market data | **complete** |
-| 3 | Market terminal, scanner, frontend | scanner **complete**; terminal in progress |
+| 3 | Market terminal, scanner, frontend | **complete** |
 | 4 | Indicators, SMC, strategy engine | not started |
 | 5 | Backtesting, optimisation | not started |
 | 6 | Paper trading engine | not started |

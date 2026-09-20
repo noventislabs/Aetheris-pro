@@ -50,3 +50,29 @@ def test_available_capabilities_come_only_from_delivered_phases() -> None:
                 f"{capability.key} claims AVAILABLE but phase "
                 f"{capability.phase} has not been delivered"
             )
+
+
+def test_terminal_is_reported_as_available() -> None:
+    terminal = get_capability("ui.market_terminal")
+    assert terminal is not None
+    assert terminal.status is CapabilityStatus.AVAILABLE
+
+
+def test_watchlist_is_only_partial() -> None:
+    """Browser-local preferences are not a persisted watchlist.
+
+    Claiming AVAILABLE here would tell a user their list is saved when it
+    exists only in one browser and disappears when storage is cleared.
+    """
+    watchlist = get_capability("ui.watchlist")
+    assert watchlist is not None
+    assert watchlist.status is CapabilityStatus.PARTIAL
+    assert "not a persisted" in watchlist.detail
+
+
+def test_indicators_and_smc_remain_unclaimed() -> None:
+    """The terminal shows these as NOT AVAILABLE; the registry must agree."""
+    for key in ("analysis.indicators", "analysis.smc"):
+        capability = get_capability(key)
+        assert capability is not None
+        assert capability.status is CapabilityStatus.PLANNED

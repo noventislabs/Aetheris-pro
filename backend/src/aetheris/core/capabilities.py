@@ -137,6 +137,27 @@ CAPABILITIES: tuple[Capability, ...] = (
         ),
     ),
     Capability(
+        key="ui.market_terminal",
+        name="Market terminal (Markets + Scanner)",
+        status=CapabilityStatus.AVAILABLE,
+        phase=3,
+        detail=(
+            "Read-only Next.js terminal: symbol search, OHLCV chart, scanner table. "
+            "Analysis interface only; it has no order entry and stores no credentials."
+        ),
+    ),
+    Capability(
+        key="ui.watchlist",
+        name="Watchlist",
+        status=CapabilityStatus.PARTIAL,
+        phase=3,
+        detail=(
+            "The terminal remembers the selected symbol and timeframe in browser "
+            "storage only. This is a per-browser preference, not a persisted "
+            "watchlist; server-side persistence needs phase 1."
+        ),
+    ),
+    Capability(
         key="analysis.scanner_metrics",
         name="Scanner candle statistics",
         status=CapabilityStatus.AVAILABLE,

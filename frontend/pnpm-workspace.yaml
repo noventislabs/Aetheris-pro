@@ -1,0 +1,7 @@
+# esbuild and the native resolver need their postinstall step to produce
+# platform binaries. pnpm blocks build scripts by default, which would leave
+# vitest unable to run at all. Both are well-known build tools, not runtime
+# dependencies of the shipped page.
+allowBuilds:
+  esbuild: true
+  unrs-resolver: true
