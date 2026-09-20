@@ -5,13 +5,24 @@
 *.pem
 *.key
 
-# Dependencies
-node_modules/
-vendor/
-.venv/
-venv/
+# Python
 __pycache__/
 *.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Node / Next.js
+node_modules/
+.next/
+.turbo/
+*.tsbuildinfo
 
 # Build output
 dist/
