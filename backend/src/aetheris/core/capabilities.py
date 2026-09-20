@@ -27,6 +27,12 @@ class CapabilityStatus(StrEnum):
         return self in (CapabilityStatus.AVAILABLE, CapabilityStatus.PARTIAL)
 
 
+#: Phases whose work is merged and tested. A capability may only be marked
+#: AVAILABLE if its phase appears here, which keeps the registry from
+#: drifting ahead of delivery one optimistic edit at a time.
+DELIVERED_PHASES: frozenset[int] = frozenset({0, 2})
+
+
 class Capability(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -76,18 +82,58 @@ CAPABILITIES: tuple[Capability, ...] = (
         detail="No database is configured in this build; nothing is persisted across restarts.",
     ),
     Capability(
-        key="exchange.binance_futures",
-        name="Binance USDT-M Futures adapter",
-        status=CapabilityStatus.PLANNED,
+        key="exchange.abstraction",
+        name="Exchange abstraction",
+        status=CapabilityStatus.AVAILABLE,
         phase=2,
-        detail="Exchange abstraction and market-data ingestion. Not started.",
+        detail=(
+            "MarketDataPort defines read-only venue access. The trading port is "
+            "declared as a type only and implemented by nothing."
+        ),
+    ),
+    Capability(
+        key="exchange.binance_futures",
+        name="Binance USDT-M Futures public market data",
+        status=CapabilityStatus.AVAILABLE,
+        phase=2,
+        detail=(
+            "Public REST market data, read-only. Holds no credentials and has no "
+            "code path to an order."
+        ),
+    ),
+    Capability(
+        key="market.symbol_discovery",
+        name="Dynamic symbol discovery",
+        status=CapabilityStatus.AVAILABLE,
+        phase=2,
+        detail=(
+            "Eligible USDT-M perpetuals are discovered from venue metadata; no "
+            "symbol list is hardcoded."
+        ),
+    ),
+    Capability(
+        key="market.ticker",
+        name="Ticker data",
+        status=CapabilityStatus.AVAILABLE,
+        phase=2,
+        detail="Normalized 24h statistics with best bid/ask where the venue publishes it.",
+    ),
+    Capability(
+        key="market.klines",
+        name="OHLCV candle data",
+        status=CapabilityStatus.AVAILABLE,
+        phase=2,
+        detail="Validated candles for 1m/5m/15m/1h/4h/1d, REST only. No websocket stream.",
     ),
     Capability(
         key="market.scanner",
         name="Dynamic symbol discovery and scanner",
         status=CapabilityStatus.PLANNED,
         phase=3,
-        detail="Symbol eligibility filtering and opportunity scoring. Not started.",
+        detail=(
+            "Eligibility filtering exists (phase 2); opportunity scoring and the "
+            "scanner itself are not started."
+        ),
     ),
     Capability(
         key="analysis.indicators",

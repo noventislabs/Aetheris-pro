@@ -81,6 +81,16 @@ def configure_logging(*, debug: bool = False, level: str = "INFO") -> None:
 
 
 def get_logger(component: str) -> structlog.stdlib.BoundLogger:
-    """Return a logger bound to a component name, e.g. ``risk.engine``."""
-    logger: structlog.stdlib.BoundLogger = structlog.get_logger().bind(component=component)
+    """Return a logger bound to a component name, e.g. ``risk.engine``.
+
+    Initial values are passed to ``get_logger`` rather than applied with a
+    subsequent ``.bind()``. That difference matters: ``.bind()`` resolves the
+    configuration immediately, so a module-level logger created at import time
+    would capture structlog's *defaults* and keep them forever -- losing the
+    JSON renderer, the UTC timestamps, the level filter and the request-context
+    processor, because imports run before ``configure_logging``. Passing
+    initial values instead returns a lazy proxy that binds on first use, by
+    which time the real configuration is installed.
+    """
+    logger: structlog.stdlib.BoundLogger = structlog.get_logger(component=component)
     return logger

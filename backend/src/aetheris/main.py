@@ -10,15 +10,18 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
+import httpx
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from aetheris import __version__
+from aetheris.adapters.exchange.binance.adapter import BinanceFuturesMarketDataAdapter
 from aetheris.api.exception_handlers import register_exception_handlers
 from aetheris.api.middleware import RequestContextMiddleware, SecurityHeadersMiddleware
 from aetheris.api.v1.router import api_router
 from aetheris.core.config import Settings, get_settings
 from aetheris.core.logging import configure_logging, get_logger
+from aetheris.services.market_data import MarketDataService
 
 _log = get_logger("app")
 
@@ -33,16 +36,27 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         default_mode=settings.default_mode,
         enabled_modes=[m.value for m in settings.enabled_modes],
         autonomous_trading_enabled=settings.autonomous_trading_enabled,
+        exchange=app.state.market_data_service.exchange_name,
     )
-    yield
-    _log.info("shutdown")
+    try:
+        yield
+    finally:
+        # Release the exchange connection pool even if startup partly failed.
+        await app.state.market_data_service.aclose()
+        _log.info("shutdown")
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
+def create_app(
+    settings: Settings | None = None,
+    *,
+    exchange_transport: httpx.AsyncBaseTransport | None = None,
+) -> FastAPI:
     """Build the ASGI application.
 
     Accepting settings as an argument keeps the app testable: a test can build
     an app with a hand-made configuration without touching the environment.
+    ``exchange_transport`` serves the same purpose for the network -- tests
+    inject a mock transport so the suite never depends on a venue being up.
     """
     settings = settings or get_settings()
     configure_logging(debug=settings.debug, level="DEBUG" if settings.debug else "INFO")
@@ -57,6 +71,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         lifespan=lifespan,
     )
     app.state.settings = settings
+    app.state.market_data_service = MarketDataService(
+        BinanceFuturesMarketDataAdapter(
+            settings=settings.binance,
+            market_data=settings.market_data,
+            transport=exchange_transport,
+        )
+    )
 
     # Middleware executes bottom-up, so RequestContextMiddleware is added last
     # and therefore runs first -- every log line below it carries a request ID.
@@ -64,7 +85,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         CORSMiddleware,
         allow_origins=settings.cors_origins,
         allow_credentials=True,
-        allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+        # This build is read-only, so CORS advertises only what exists.
+        # Write methods are added back in the phase that introduces a
+        # write endpoint, not in advance of one.
+        allow_methods=["GET", "OPTIONS"],
         allow_headers=["Authorization", "Content-Type", "X-Correlation-ID"],
         expose_headers=["X-Request-ID", "X-Correlation-ID"],
     )

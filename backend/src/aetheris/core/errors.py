@@ -53,6 +53,13 @@ class ErrorCode(StrEnum):
     UPSTREAM_UNAVAILABLE = "UPSTREAM_UNAVAILABLE"
     INTERNAL_ERROR = "INTERNAL_ERROR"
 
+    # Exchange connectivity faults. Distinct codes because the caller's
+    # correct response differs: back off, retry later, or report a bug.
+    EXCHANGE_RATE_LIMITED = "EXCHANGE_RATE_LIMITED"
+    EXCHANGE_UNAVAILABLE = "EXCHANGE_UNAVAILABLE"
+    EXCHANGE_TIMEOUT = "EXCHANGE_TIMEOUT"
+    EXCHANGE_INVALID_RESPONSE = "EXCHANGE_INVALID_RESPONSE"
+
 
 class ErrorBody(BaseModel):
     code: str

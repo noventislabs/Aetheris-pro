@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from aetheris.core.capabilities import (
     CAPABILITIES,
+    DELIVERED_PHASES,
     CapabilityStatus,
     get_capability,
     is_operational,
@@ -37,7 +38,15 @@ def test_trading_capabilities_are_not_claimed_in_this_build() -> None:
         )
 
 
-def test_available_capabilities_are_phase_zero_only() -> None:
+def test_available_capabilities_come_only_from_delivered_phases() -> None:
+    """The registry may not run ahead of what has actually shipped.
+
+    DELIVERED_PHASES is edited deliberately when a phase lands, so marking a
+    capability available early fails here rather than misleading a user.
+    """
     for capability in CAPABILITIES:
         if capability.status is CapabilityStatus.AVAILABLE:
-            assert capability.phase == 0
+            assert capability.phase in DELIVERED_PHASES, (
+                f"{capability.key} claims AVAILABLE but phase "
+                f"{capability.phase} has not been delivered"
+            )

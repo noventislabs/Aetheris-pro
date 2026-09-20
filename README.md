@@ -2,12 +2,13 @@
 
 Professional crypto trading and quantitative research platform.
 
-> **Phase 0 of 10 — foundation only.**
-> This build places **no orders in any mode**. It has no exchange connection, no
-> database, no strategies and no trading engines. What exists is the
-> foundation the rest is built on: configuration, exact money arithmetic, data
-> provenance, the error and risk vocabulary, observability, and an API that
-> reports honestly on what is and is not implemented.
+> **Phases 0 and 2 of 10 — foundation plus read-only market data.**
+> This build places **no orders in any mode**. It has no database, no
+> strategies and no trading engines. What exists is the foundation
+> (configuration, exact money arithmetic, data provenance, the error and risk
+> vocabulary, observability) and a **read-only** Binance USDT-M Futures market-
+> data layer: dynamic symbol discovery, tickers and OHLCV, each carrying
+> provenance and a freshness status.
 >
 > Ask the running service what it can do: `GET /api/v1/system/capabilities`.
 
@@ -54,6 +55,25 @@ These are enforced by code and tests, not by convention:
 | Testnet trading | **off** |
 | Live trading | **off** (double-gated) |
 
+## API
+
+All routes are `GET`. There is no non-GET route anywhere in this build, and a
+test asserts it.
+
+| Endpoint | Purpose |
+|---|---|
+| `/api/v1/health/live` · `/health/ready` | Liveness and readiness |
+| `/api/v1/system/status` | Mode posture and risk defaults |
+| `/api/v1/system/capabilities` | What is genuinely implemented |
+| `/api/v1/markets/status` | Observed exchange connectivity |
+| `/api/v1/markets/exchange-info` | Venue metadata and instrument counts |
+| `/api/v1/markets/symbols` | Discovered universe, with `search` |
+| `/api/v1/markets/symbols/{symbol}` | One instrument's metadata and filters |
+| `/api/v1/markets/{symbol}/ticker` | Ticker in an observation envelope |
+| `/api/v1/markets/{symbol}/klines` | Candles in an observation envelope |
+
+See [docs/exchange.md](docs/exchange.md) for the exchange layer in detail.
+
 ## Quick start
 
 ```bash
@@ -86,6 +106,8 @@ frontend/          Next.js terminal                       (phase 3)
 
 - [Architecture](docs/architecture.md) — layering, decision pipeline, modes,
   provenance, current status
+- [Exchange layer](docs/exchange.md) — adapter design, symbol discovery,
+  freshness, caching, rate limiting, error codes
 - [Setup](docs/setup.md) — environment, commands, quality gates
 - [ADRs](docs/adr/) — recorded decisions, including the open database question
 
@@ -107,7 +129,7 @@ cd backend
 |---|---|---|
 | 0 | Repository and architecture foundation | **complete** |
 | 1 | Authentication, database, configuration | blocked — see ADR 0002 |
-| 2 | Exchange abstraction, Binance Futures market data | not started |
+| 2 | Exchange abstraction, Binance Futures market data | **complete** |
 | 3 | Market terminal, scanner, frontend | not started |
 | 4 | Indicators, SMC, strategy engine | not started |
 | 5 | Backtesting, optimisation | not started |

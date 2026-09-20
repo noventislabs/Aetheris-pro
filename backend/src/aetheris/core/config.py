@@ -14,6 +14,7 @@ from __future__ import annotations
 from decimal import Decimal
 from functools import lru_cache
 from typing import Literal, Self
+from urllib.parse import urlparse
 
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -67,6 +68,82 @@ class RiskSettings(BaseSettings):
         return value
 
 
+class BinanceFuturesSettings(BaseSettings):
+    """Binance USDT-M Futures connectivity.
+
+    Public market data needs no credentials, so none are defined here. Trading
+    keys arrive with the testnet/live phases and will live in their own
+    settings class, keeping a read-only deployment incapable of holding a
+    trading credential at all.
+    """
+
+    model_config = SettingsConfigDict(env_prefix="AETHERIS_BINANCE_", extra="ignore")
+
+    futures_rest_base_url: str = Field(
+        default="https://fapi.binance.com",
+        description="Base URL for Binance USDT-M Futures public REST endpoints",
+    )
+    request_timeout_seconds: float = Field(default=10.0, gt=0, le=60)
+    connect_timeout_seconds: float = Field(default=5.0, gt=0, le=60)
+    max_retries: int = Field(
+        default=3, ge=0, le=5, description="Retries after the first attempt, never unbounded"
+    )
+    backoff_seconds: float = Field(
+        default=0.5, ge=0, le=10, description="Base delay for exponential backoff"
+    )
+    max_backoff_seconds: float = Field(default=8.0, ge=0, le=60)
+
+    # Cache sizing is deliberately small: the target machine has ~1 GB free RAM
+    # and a kline entry can hold 1500 candles.
+    exchange_info_ttl_seconds: float = Field(default=300.0, gt=0)
+    ticker_ttl_seconds: float = Field(default=3.0, gt=0)
+    klines_ttl_seconds: float = Field(default=10.0, gt=0)
+    klines_cache_max_entries: int = Field(default=16, ge=1, le=256)
+    ticker_cache_max_entries: int = Field(default=64, ge=1, le=1024)
+
+    default_klines_limit: int = Field(default=200, ge=1, le=1500)
+    max_klines_limit: int = Field(
+        default=1500, ge=1, le=1500, description="Binance hard ceiling for /klines"
+    )
+
+    @field_validator("futures_rest_base_url")
+    @classmethod
+    def _must_be_a_plain_https_base(cls, value: str) -> str:
+        """Constrain the only externally-controlled URL in the system.
+
+        This value is operator configuration, never request input -- no API
+        parameter can redirect a call elsewhere. Validating it anyway keeps a
+        typo or a copied config from silently pointing the adapter at http, or
+        at a URL carrying a path/query that would corrupt every request.
+        """
+        parsed = urlparse(value)
+        if parsed.scheme not in ("https", "http"):
+            raise ValueError("base URL must be http or https")
+        if not parsed.netloc:
+            raise ValueError("base URL must include a host")
+        if parsed.query or parsed.fragment:
+            raise ValueError("base URL must not carry a query string or fragment")
+        return value.rstrip("/")
+
+
+class MarketDataSettings(BaseSettings):
+    """Freshness policy for externally sourced market data."""
+
+    model_config = SettingsConfigDict(env_prefix="AETHERIS_MARKET_DATA_", extra="ignore")
+
+    max_ticker_age_seconds: float = Field(
+        default=30.0,
+        gt=0,
+        description="A ticker older than this is reported STALE and carries no value",
+    )
+    max_candle_age_multiple: float = Field(
+        default=2.5,
+        gt=0,
+        description="A closed candle older than this many intervals marks the series STALE",
+    )
+    symbol_search_limit: int = Field(default=25, ge=1, le=200)
+
+
 class Settings(BaseSettings):
     """Top-level application settings."""
 
@@ -100,6 +177,8 @@ class Settings(BaseSettings):
     secret_key: SecretStr | None = None
 
     risk: RiskSettings = Field(default_factory=RiskSettings)
+    binance: BinanceFuturesSettings = Field(default_factory=BinanceFuturesSettings)
+    market_data: MarketDataSettings = Field(default_factory=MarketDataSettings)
 
     @model_validator(mode="after")
     def _live_requires_two_switches(self) -> Self:

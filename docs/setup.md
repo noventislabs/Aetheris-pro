@@ -56,6 +56,20 @@ cd backend
 .venv/Scripts/python.exe -m mypy               # strict type check
 ```
 
+## Live market-data smoke test (opt-in)
+
+CI never depends on Binance being reachable. To verify real connectivity by
+hand:
+
+```bash
+cd backend
+.venv/Scripts/python.exe -m aetheris.tools.binance_smoke
+```
+
+Public endpoints only, no credentials, no orders. It exits non-zero printing
+`BINANCE_UNAVAILABLE` rather than inventing a result if the venue is
+unreachable.
+
 ## Known environment constraints
 
 - **~1 GB free RAM** on the development machine (7.7 GB total, i3-1215U).
@@ -63,3 +77,7 @@ cd backend
   simultaneously.
 - **No PostgreSQL and no Docker.** Phase 1 cannot start until a database is
   available; see the options recorded in `docs/adr/0002-database-hosting.md`.
+  Phase 2 needs no database: nothing is persisted, and market data is fetched
+  live and cached in-process.
+- **Outbound HTTPS to `fapi.binance.com`** is required for live market data.
+  The mocked test suite does not need it.

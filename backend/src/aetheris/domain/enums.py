@@ -128,3 +128,51 @@ _TIMEFRAME_SECONDS: dict[Timeframe, int] = {
     Timeframe.H4: 14_400,
     Timeframe.D1: 86_400,
 }
+
+
+class SymbolStatus(StrEnum):
+    """Tradability of an instrument as reported by the venue.
+
+    UNKNOWN exists so that a status the venue adds tomorrow is preserved as
+    "we do not recognise this" rather than being coerced into TRADING.
+    """
+
+    TRADING = "TRADING"
+    PENDING_TRADING = "PENDING_TRADING"
+    PRE_DELIVERING = "PRE_DELIVERING"
+    DELIVERING = "DELIVERING"
+    DELIVERED = "DELIVERED"
+    PRE_SETTLE = "PRE_SETTLE"
+    SETTLING = "SETTLING"
+    CLOSE = "CLOSE"
+    HALT = "HALT"
+    BREAK = "BREAK"
+    AUCTION_MATCH = "AUCTION_MATCH"
+    UNKNOWN = "UNKNOWN"
+
+    @property
+    def is_tradable(self) -> bool:
+        return self is SymbolStatus.TRADING
+
+
+class ContractType(StrEnum):
+    PERPETUAL = "PERPETUAL"
+    CURRENT_MONTH = "CURRENT_MONTH"
+    NEXT_MONTH = "NEXT_MONTH"
+    CURRENT_QUARTER = "CURRENT_QUARTER"
+    NEXT_QUARTER = "NEXT_QUARTER"
+    PERPETUAL_DELIVERING = "PERPETUAL_DELIVERING"
+    UNKNOWN = "UNKNOWN"
+
+
+class ConnectionStatus(StrEnum):
+    """Observed state of an upstream connection.
+
+    CONNECTED is only ever set by an actually-successful response; it is never
+    inferred from configuration being present.
+    """
+
+    CONNECTED = "CONNECTED"
+    DEGRADED = "DEGRADED"
+    UNAVAILABLE = "UNAVAILABLE"
+    UNKNOWN = "UNKNOWN"

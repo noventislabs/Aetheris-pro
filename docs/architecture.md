@@ -1,6 +1,7 @@
 # Aetheris Pro — Architecture
 
-> Status: Phase 0 (foundation). This document describes the intended shape of
+> Status: Phase 2 (exchange abstraction + Binance Futures market data). This
+> document describes the intended shape of
 > the whole system and marks clearly which parts exist today. Anything not
 > marked **implemented** is not built, and the running service reports the same
 > thing at `GET /api/v1/system/capabilities`.
@@ -37,7 +38,8 @@ Dependencies point downward only. A lower layer never imports an upper one.
    authority     │  engines/risk  ← final gate         │
                  └─────────────────────────────────────┘
                  ┌─────────────────────────────────────┐
-   integration   │  adapters/ exchange · persistence   │
+   integration   │  adapters/exchange (Binance USDT-M)  │
+                 │  adapters/ persistence  (phase 1)   │
                  └─────────────────────────────────────┘
                  ┌─────────────────────────────────────┐
    foundation    │  core/  config · money · freshness  │
@@ -148,7 +150,25 @@ makes the service *unready*, not *dead*; conflating the two produces restart
 loops that deepen an outage. Readiness distinguishes `NOT_CONFIGURED` (never
 had it) from `UNAVAILABLE` (had it, lost it) — only the latter is an incident.
 
-## 9. Current implementation status
+## 9. Exchange layer (phase 2)
+
+`MarketDataPort` is the read-only contract every venue adapter implements;
+`TradingPort` is a declared type that **nothing implements**, so there is no
+runtime path to an order in this build. Binance-specific field names live in
+exactly one module (`adapters/exchange/binance/parsing.py`) and never escape it
+— an architecture test fails the build if a venue name or an exchange import
+reaches `core/` or `domain/`.
+
+Market data is dynamically discovered rather than configured: eligibility is a
+pure predicate over venue metadata (`PERPETUAL`, `USDT`-quoted, `TRADING`,
+positive tick and step), so newly listed contracts appear without a code
+change. Against live Binance that is 905 instruments listed, 528 eligible.
+
+Caches store domain objects, never `Observation` envelopes, and freshness is
+recomputed on every serve — so a cached value can never be handed back wearing
+a stale `OK`. Full detail in [exchange.md](exchange.md).
+
+## 9a. Current implementation status
 
 | Area | Status |
 |---|---|
@@ -160,8 +180,13 @@ had it) from `UNAVAILABLE` (had it, lost it) — only the latter is an incident.
 | Structured logging, request context, security headers | implemented, tested |
 | Health, system status, capabilities API | implemented, tested |
 | Authentication, database, migrations | **not started** (phase 1) |
-| Exchange adapter, market data | **not started** (phase 2) |
+| Exchange abstraction (`MarketDataPort`) | implemented, tested |
+| Binance USDT-M public market data (read-only) | implemented, tested |
+| Dynamic symbol discovery and search | implemented, tested |
+| Ticker and OHLCV with provenance | implemented, tested |
+| Bounded TTL cache, retry/backoff, rate-limit handling | implemented, tested |
 | Scanner, indicators, SMC, strategies | **not started** (phases 3–4) |
+| Websockets, funding rate, open interest | **not started** |
 | Backtesting, optimisation | **not started** (phase 5) |
 | Paper engine | **not started** (phase 6) |
 | Risk engine, portfolio | **not started** (phase 7) |

@@ -45,7 +45,7 @@ class Observation[T](BaseModel):
 
     value: T | None = None
     status: DataStatus = DataStatus.OK
-    source: str = Field(description="Origin of the datum, e.g. 'binance-futures:rest'")
+    source: str = Field(description="Origin of the datum, e.g. 'venue-adapter:rest'")
     event_ts: datetime | None = Field(
         default=None, description="Exchange-side timestamp of the event, when provided"
     )
