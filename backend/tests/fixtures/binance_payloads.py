@@ -200,3 +200,39 @@ def stale_klines(*, count: int = 3, interval_seconds: int = 3600) -> list[list[A
         )
         for index in range(count)
     ]
+
+
+def ticker_24h_list(
+    symbols: list[str],
+    *,
+    age_seconds: float = 1.0,
+    prices: dict[str, str] | None = None,
+    quote_volumes: dict[str, str] | None = None,
+    change_percents: dict[str, str] | None = None,
+    ages: dict[str, float] | None = None,
+) -> list[dict[str, Any]]:
+    """Whole-market 24h snapshot, as Binance serves it with no symbol filter.
+
+    ``ages`` overrides the age of individual entries, which is how a real
+    snapshot looks: heavily traded contracts are seconds old while quiet ones
+    are minutes behind.
+    """
+    prices = prices or {}
+    quote_volumes = quote_volumes or {}
+    change_percents = change_percents or {}
+    ages = ages or {}
+    entries = []
+    for symbol in symbols:
+        entry = ticker_24h(
+            symbol=symbol,
+            last_price=prices.get(symbol, "100.00"),
+            age_seconds=ages.get(symbol, age_seconds),
+        )
+        entry["quoteVolume"] = quote_volumes.get(symbol, "1000000.00")
+        entry["priceChangePercent"] = change_percents.get(symbol, "1.000")
+        entries.append(entry)
+    return entries
+
+
+def book_ticker_list(symbols: list[str]) -> list[dict[str, Any]]:
+    return [book_ticker(symbol=symbol) for symbol in symbols]

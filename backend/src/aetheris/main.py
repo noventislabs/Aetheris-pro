@@ -22,6 +22,7 @@ from aetheris.api.v1.router import api_router
 from aetheris.core.config import Settings, get_settings
 from aetheris.core.logging import configure_logging, get_logger
 from aetheris.services.market_data import MarketDataService
+from aetheris.services.scanner import ScannerService
 
 _log = get_logger("app")
 
@@ -71,13 +72,16 @@ def create_app(
         lifespan=lifespan,
     )
     app.state.settings = settings
-    app.state.market_data_service = MarketDataService(
-        BinanceFuturesMarketDataAdapter(
-            settings=settings.binance,
-            market_data=settings.market_data,
-            transport=exchange_transport,
-        )
+    exchange = BinanceFuturesMarketDataAdapter(
+        settings=settings.binance,
+        market_data=settings.market_data,
+        transport=exchange_transport,
     )
+    # Both services share one adapter, so they share its connection pool and
+    # its caches -- a scan and a chart request for the same symbol do not
+    # fetch it twice.
+    app.state.market_data_service = MarketDataService(exchange)
+    app.state.scanner_service = ScannerService(exchange, settings.scanner, settings.market_data)
 
     # Middleware executes bottom-up, so RequestContextMiddleware is added last
     # and therefore runs first -- every log line below it carries a request ID.

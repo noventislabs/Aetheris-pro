@@ -359,3 +359,49 @@ def parse_klines(raw: Any, *, symbol: str, timeframe: Timeframe) -> CandleSeries
         return CandleSeries(symbol=symbol, timeframe=timeframe, candles=candles)
     except ValidationError as exc:
         raise _fail("kline series failed ordering validation", reason=str(exc)[:200]) from exc
+
+
+def parse_ticker_list(raw: Any, book: Any = None) -> tuple[Ticker, ...]:
+    """Normalize a whole-market ticker snapshot.
+
+    Binance serves every instrument's 24h statistics from one request when no
+    symbol is given, which is the difference between one HTTP call and several
+    hundred for a market scan.
+
+    A single unparseable entry is skipped with a logged reason rather than
+    discarding the snapshot -- the same tolerance applied to the symbol
+    universe, and for the same reason. An entirely unparseable payload is
+    rejected.
+    """
+    if not isinstance(raw, list):
+        raise _fail("ticker list response was not a JSON array")
+
+    book_by_symbol: dict[str, dict[str, Any]] = {}
+    if isinstance(book, list):
+        for entry in book:
+            if isinstance(entry, dict) and isinstance(entry.get("symbol"), str):
+                book_by_symbol[entry["symbol"]] = entry
+
+    tickers: list[Ticker] = []
+    skipped = 0
+    for entry in raw:
+        if not isinstance(entry, dict):
+            skipped += 1
+            continue
+        symbol = entry.get("symbol")
+        try:
+            tickers.append(
+                parse_ticker(
+                    entry,
+                    book_by_symbol.get(symbol) if isinstance(symbol, str) else None,
+                )
+            )
+        except (ExchangeInvalidResponseError, ValidationError) as exc:
+            skipped += 1
+            _log.warning("exchange_ticker_skipped", symbol=symbol, reason=str(exc)[:200])
+
+    if raw and not tickers:
+        raise _fail("no ticker in the snapshot could be parsed", tickers_received=len(raw))
+    if skipped:
+        _log.info("exchange_tickers_partial", parsed=len(tickers), skipped=skipped)
+    return tuple(tickers)

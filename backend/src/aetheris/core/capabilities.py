@@ -30,7 +30,7 @@ class CapabilityStatus(StrEnum):
 #: Phases whose work is merged and tested. A capability may only be marked
 #: AVAILABLE if its phase appears here, which keeps the registry from
 #: drifting ahead of delivery one optimistic edit at a time.
-DELIVERED_PHASES: frozenset[int] = frozenset({0, 2})
+DELIVERED_PHASES: frozenset[int] = frozenset({0, 2, 3})
 
 
 class Capability(BaseModel):
@@ -127,12 +127,23 @@ CAPABILITIES: tuple[Capability, ...] = (
     ),
     Capability(
         key="market.scanner",
-        name="Dynamic symbol discovery and scanner",
-        status=CapabilityStatus.PLANNED,
+        name="Market scanner",
+        status=CapabilityStatus.AVAILABLE,
         phase=3,
         detail=(
-            "Eligibility filtering exists (phase 2); opportunity scoring and the "
-            "scanner itself are not started."
+            "Bounded search, filter, sort and pagination over the discovered "
+            "universe, with a deterministic Market Opportunity Score. The score "
+            "is a ranking metric, not a probability of profit or a prediction."
+        ),
+    ),
+    Capability(
+        key="analysis.scanner_metrics",
+        name="Scanner candle statistics",
+        status=CapabilityStatus.AVAILABLE,
+        phase=3,
+        detail=(
+            "Deterministic volatility, ATR, momentum, trend and relative-volume "
+            "statistics over closed candles. Not the full indicator engine."
         ),
     ),
     Capability(
@@ -140,7 +151,10 @@ CAPABILITIES: tuple[Capability, ...] = (
         name="Technical indicator engine",
         status=CapabilityStatus.PLANNED,
         phase=4,
-        detail="Deterministic, look-ahead-free indicators. Not started.",
+        detail=(
+            "Full indicator engine (SMA, EMA, RSI, MACD, Bollinger, VWAP, ADX...). "
+            "Not started; the scanner's own statistics are a separate, narrower set."
+        ),
     ),
     Capability(
         key="analysis.smc",

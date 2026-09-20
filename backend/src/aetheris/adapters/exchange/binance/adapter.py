@@ -38,6 +38,7 @@ from aetheris.domain.market import (
 _log = get_logger("exchange.binance")
 
 _EXCHANGE_INFO_KEY = "exchange-info"
+_ALL_TICKERS_KEY = "all-tickers"
 
 
 class _ConnectionTracker:
@@ -110,6 +111,11 @@ class BinanceFuturesMarketDataAdapter(MarketDataPort):
         self._klines_cache: TTLCache[CandleSeries] = TTLCache(
             ttl_seconds=settings.klines_ttl_seconds,
             max_entries=settings.klines_cache_max_entries,
+        )
+        # One slot: there is exactly one whole-market snapshot at a time, and
+        # it is large, so it must not be allowed to accumulate copies.
+        self._all_tickers_cache: TTLCache[tuple[Ticker, ...]] = TTLCache(
+            ttl_seconds=settings.ticker_ttl_seconds, max_entries=1
         )
 
     @property
@@ -234,6 +240,65 @@ class BinanceFuturesMarketDataAdapter(MarketDataPort):
                 event_ts=ticker.event_time,
             )
         return Observation[Ticker].ok(ticker, source=self.source, event_ts=ticker.event_time)
+
+    async def get_all_tickers(self) -> Observation[tuple[Ticker, ...]]:
+        """Whole-market snapshot: two requests, not two per instrument.
+
+        Snapshot-level freshness is judged on the *newest* event timestamp,
+        which answers "is this feed alive at all". It deliberately does not
+        answer "is this instrument's price current": in a 500-contract snapshot
+        a quiet perpetual is routinely minutes behind, and judging the whole on
+        the oldest would mark the entire market stale forever while blanking
+        every price on the table.
+
+        Per-instrument freshness is therefore decided by the consumer, per row,
+        against each ticker's own timestamp -- so a stale quiet contract and a
+        live BTC quote can sit in the same response, each labelled correctly.
+        """
+        cached = self._all_tickers_cache.get(_ALL_TICKERS_KEY)
+        if cached is None:
+            results: tuple[Any, Any] = await asyncio.gather(
+                self._get(endpoints.TICKER_24H),
+                self._get(endpoints.BOOK_TICKER),
+                return_exceptions=True,
+            )
+            stats_result, book_result = results[0], results[1]
+            if isinstance(stats_result, BaseException):
+                raise stats_result
+
+            book_payload: Any = book_result
+            if isinstance(book_result, BaseException):
+                _log.warning(
+                    "exchange_error",
+                    source=self.source,
+                    path=endpoints.BOOK_TICKER,
+                    reason="book_ticker_snapshot_unavailable",
+                )
+                book_payload = None
+
+            cached = parsing.parse_ticker_list(stats_result, book_payload)
+            self._all_tickers_cache.set(_ALL_TICKERS_KEY, cached)
+            # 'event' is structlog's own key for the event name, so the
+            # discriminator here is 'kind'.
+            _log.info(
+                "market_data_updated",
+                source=self.source,
+                kind="ticker_snapshot",
+                tickers=len(cached),
+            )
+
+        event_times = [t.event_time for t in cached if t.event_time is not None]
+        newest = max(event_times) if event_times else None
+        age = self._classify(newest, self._market_data.max_ticker_age_seconds)
+        if age is not None and age > self._market_data.max_ticker_age_seconds:
+            # Even the most recently traded instrument is old: the feed itself
+            # has stopped, which is a real outage rather than a quiet market.
+            return Observation[tuple[Ticker, ...]].stale(
+                source=self.source,
+                detail=f"Newest ticker in the whole snapshot is {age:.1f}s old",
+                event_ts=newest,
+            )
+        return Observation[tuple[Ticker, ...]].ok(cached, source=self.source, event_ts=newest)
 
     async def get_klines(
         self, symbol: str, timeframe: Timeframe, *, limit: int

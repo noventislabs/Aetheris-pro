@@ -144,6 +144,37 @@ class MarketDataSettings(BaseSettings):
     symbol_search_limit: int = Field(default=25, ge=1, le=200)
 
 
+class ScannerSettings(BaseSettings):
+    """Bounds for a market scan.
+
+    Every value here exists to keep one HTTP request from turning into
+    hundreds. The universe is several hundred perpetuals; fetching candles for
+    all of them per request is not a slow option, it is a rate-limit ban and an
+    out-of-memory error on an 8 GB machine.
+    """
+
+    model_config = SettingsConfigDict(env_prefix="AETHERIS_SCANNER_", extra="ignore")
+
+    default_page_size: int = Field(default=25, ge=1, le=200)
+    max_page_size: int = Field(default=100, ge=1, le=200)
+
+    #: When ordering by a candle-derived field, metrics are computed for this
+    #: many of the most liquid instruments and the ranking covers that pool.
+    #: The response says so rather than implying the whole market was ranked.
+    candidate_pool_size: int = Field(default=60, ge=1, le=120)
+
+    #: Hard ceiling on candle requests served for any single scan.
+    max_metric_symbols: int = Field(default=60, ge=1, le=120)
+
+    #: Simultaneous upstream candle requests. Small on purpose.
+    metric_concurrency: int = Field(default=6, ge=1, le=16)
+
+    #: Candles pulled per instrument for metrics. Enough for the 15-bar
+    #: minimum plus the 10-bar momentum lookback, with headroom for a forming
+    #: bar being dropped -- and no more, because this multiplies by the pool.
+    candle_limit: int = Field(default=60, ge=20, le=500)
+
+
 class Settings(BaseSettings):
     """Top-level application settings."""
 
@@ -179,6 +210,7 @@ class Settings(BaseSettings):
     risk: RiskSettings = Field(default_factory=RiskSettings)
     binance: BinanceFuturesSettings = Field(default_factory=BinanceFuturesSettings)
     market_data: MarketDataSettings = Field(default_factory=MarketDataSettings)
+    scanner: ScannerSettings = Field(default_factory=ScannerSettings)
 
     @model_validator(mode="after")
     def _live_requires_two_switches(self) -> Self:

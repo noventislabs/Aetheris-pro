@@ -61,6 +61,15 @@ class MarketDataPort(ABC):
         """Latest ticker, wrapped with provenance and freshness."""
 
     @abstractmethod
+    async def get_all_tickers(self) -> Observation[tuple[Ticker, ...]]:
+        """Whole-market ticker snapshot in a single request.
+
+        Exists so a market scan costs one upstream call rather than one per
+        instrument; with several hundred eligible perpetuals the per-symbol
+        approach is not a slower option, it is a rate-limit ban.
+        """
+
+    @abstractmethod
     async def get_klines(
         self, symbol: str, timeframe: Timeframe, *, limit: int
     ) -> Observation[CandleSeries]:

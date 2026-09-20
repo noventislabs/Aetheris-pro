@@ -1,6 +1,6 @@
 # Aetheris Pro — Architecture
 
-> Status: Phase 2 (exchange abstraction + Binance Futures market data). This
+> Status: Phase 3 (scanner + market terminal). This
 > document describes the intended shape of
 > the whole system and marks clearly which parts exist today. Anything not
 > marked **implemented** is not built, and the running service reports the same
@@ -40,6 +40,9 @@ Dependencies point downward only. A lower layer never imports an upper one.
                  ┌─────────────────────────────────────┐
    integration   │  adapters/exchange (Binance USDT-M)  │
                  │  adapters/ persistence  (phase 1)   │
+                 └─────────────────────────────────────┘
+                 ┌─────────────────────────────────────┐
+   analysis      │  analysis/ metrics · scoring (pure) │
                  └─────────────────────────────────────┘
                  ┌─────────────────────────────────────┐
    foundation    │  core/  config · money · freshness  │
@@ -168,6 +171,19 @@ Caches store domain objects, never `Observation` envelopes, and freshness is
 recomputed on every serve — so a cached value can never be handed back wearing
 a stale `OK`. Full detail in [exchange.md](exchange.md).
 
+## 9b. Scanner layer (phase 3)
+
+`analysis/` joins `core/` and `domain/` as a pure layer -- deterministic
+arithmetic over candles with no I/O -- which is what makes it testable
+without a network and reusable by the phase 5 backtester. The architecture
+test enforces its purity alongside the others.
+
+The scanner's design constraint is upstream cost: ticker fields come from one
+whole-market request and can rank the full universe, while candle-derived
+fields cost a request per instrument and are therefore bounded to a liquidity
+pool. Every response declares which scope it used, so a subset is never
+presented as the whole market. Full detail in [scanner.md](scanner.md).
+
 ## 9a. Current implementation status
 
 | Area | Status |
@@ -185,7 +201,9 @@ a stale `OK`. Full detail in [exchange.md](exchange.md).
 | Dynamic symbol discovery and search | implemented, tested |
 | Ticker and OHLCV with provenance | implemented, tested |
 | Bounded TTL cache, retry/backoff, rate-limit handling | implemented, tested |
-| Scanner, indicators, SMC, strategies | **not started** (phases 3–4) |
+| Market scanner (bounded search/filter/sort/paging) | implemented, tested |
+| Scanner candle statistics + opportunity score | implemented, tested |
+| Indicators, SMC, strategies | **not started** (phase 4) |
 | Websockets, funding rate, open interest | **not started** |
 | Backtesting, optimisation | **not started** (phase 5) |
 | Paper engine | **not started** (phase 6) |

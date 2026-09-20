@@ -31,7 +31,11 @@ FORBIDDEN_PREFIXES = (
     "aetheris.tools",
 )
 
-PURE_PACKAGES = ("core", "domain")
+#: Layers that must stay free of I/O, frameworks and venue knowledge.
+#: `analysis` joins them in phase 3: scanner statistics are arithmetic over
+#: candles, and keeping them pure is what makes them testable without a
+#: network and reusable by the phase 5 backtester.
+PURE_PACKAGES = ("core", "domain", "analysis")
 
 
 def imported_modules(path: pathlib.Path) -> set[str]:

@@ -2,13 +2,14 @@
 
 Professional crypto trading and quantitative research platform.
 
-> **Phases 0 and 2 of 10 — foundation plus read-only market data.**
+> **Phases 0, 2 and 3 (backend) of 10 — foundation, market data, scanner.**
 > This build places **no orders in any mode**. It has no database, no
 > strategies and no trading engines. What exists is the foundation
 > (configuration, exact money arithmetic, data provenance, the error and risk
 > vocabulary, observability) and a **read-only** Binance USDT-M Futures market-
 > data layer: dynamic symbol discovery, tickers and OHLCV, each carrying
-> provenance and a freshness status.
+> provenance and a freshness status, plus a bounded market scanner with a
+> deterministic — and fully published — Market Opportunity Score.
 >
 > Ask the running service what it can do: `GET /api/v1/system/capabilities`.
 
@@ -41,6 +42,10 @@ These are enforced by code and tests, not by convention:
    each enabled by a human. Live needs two independent switches.
 5. **Claim nothing unbuilt.** The capability registry is served over the API,
    and a test fails if an unimplemented engine claims to be available.
+6. **Ranking is not prediction.** The Market Opportunity Score is a
+   deterministic ranking metric over present-tense measurements — never a
+   probability of profit, expected return, win rate or forecast. Its formula
+   and weights are published at `/api/v1/scanner/scoring-method`.
 
 ## Trading defaults
 
@@ -71,6 +76,8 @@ test asserts it.
 | `/api/v1/markets/symbols/{symbol}` | One instrument's metadata and filters |
 | `/api/v1/markets/{symbol}/ticker` | Ticker in an observation envelope |
 | `/api/v1/markets/{symbol}/klines` | Candles in an observation envelope |
+| `/api/v1/scanner` | Bounded scan: search, filter, sort, paginate |
+| `/api/v1/scanner/scoring-method` | How the opportunity score is calculated |
 
 See [docs/exchange.md](docs/exchange.md) for the exchange layer in detail.
 
@@ -108,6 +115,8 @@ frontend/          Next.js terminal                       (phase 3)
   provenance, current status
 - [Exchange layer](docs/exchange.md) — adapter design, symbol discovery,
   freshness, caching, rate limiting, error codes
+- [Scanner](docs/scanner.md) — bounded scanning, candle statistics, the
+  Market Opportunity Score and what it is not
 - [Setup](docs/setup.md) — environment, commands, quality gates
 - [ADRs](docs/adr/) — recorded decisions, including the open database question
 
@@ -130,7 +139,7 @@ cd backend
 | 0 | Repository and architecture foundation | **complete** |
 | 1 | Authentication, database, configuration | blocked — see ADR 0002 |
 | 2 | Exchange abstraction, Binance Futures market data | **complete** |
-| 3 | Market terminal, scanner, frontend | not started |
+| 3 | Market terminal, scanner, frontend | scanner **complete**; terminal in progress |
 | 4 | Indicators, SMC, strategy engine | not started |
 | 5 | Backtesting, optimisation | not started |
 | 6 | Paper trading engine | not started |
