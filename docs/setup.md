@@ -90,6 +90,31 @@ any exchange and no credential is required or accepted.
 reported on every account response and in the capability registry; it is not a
 bug to be worked around but the honest state of phase 6.
 
+## Autonomous trading settings (phase 7)
+
+Off by default. Three conditions arm it: the flag below, paper mode, and a
+deliberate `POST /api/v1/paper/autonomous`. **The arm does not survive a
+restart.**
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `AETHERIS_AUTONOMOUS_TRADING_ENABLED` | `false` | Gates arming; never arms |
+| `AETHERIS_AUTO_SYMBOLS` | `[]` | **Empty.** Never chosen for you |
+| `AETHERIS_AUTO_TIMEFRAME` | `15m` | Closed bars only |
+| `AETHERIS_AUTO_INTERVAL_SECONDS` | `30` | Management latency |
+| `AETHERIS_AUTO_POSITION_SIZE_PERCENT` | `10` | Of available balance |
+| `AETHERIS_AUTO_REQUESTED_LEVERAGE` | `1` | A request; >1 fails closed |
+| `AETHERIS_AUTO_MAX_ATR_PERCENT` | `15` | Measured, not a forecast |
+| `AETHERIS_RISK_ENTRY_COOLDOWN_SECONDS` | `300` | Now enforced |
+
+```bash
+AETHERIS_AUTONOMOUS_TRADING_ENABLED=true AETHERIS_AUTO_SYMBOLS='["ETHUSDT","SOLUSDT"]'   .venv/Scripts/python.exe -m uvicorn aetheris.main:app
+# then, deliberately:
+curl -X POST http://127.0.0.1:8000/api/v1/paper/autonomous   -H "Content-Type: application/json" -d '{"enabled": true}'
+```
+
+Full detail: [autonomous-trading.md](autonomous-trading.md).
+
 ### Sizing on a 100 USDT account
 
 Venue filters are real and are honoured rather than approximated, which has a

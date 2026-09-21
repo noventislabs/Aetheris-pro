@@ -2,8 +2,9 @@
 
 Professional crypto trading and quantitative research platform.
 
-> **Phases 0, 2, 3, 4, 5 and 6 of 10 — foundation, market data, scanner,
-> terminal, indicators, strategy analysis, backtesting and paper trading.**
+> **Phases 0, 2, 3, 4, 5, 6 and 7 of 10 — foundation, market data, scanner,
+> terminal, indicators, strategy analysis, backtesting, paper trading, the
+> risk engine and autonomous paper trading.**
 > This build sends **no order to any exchange in any mode**. It holds no API
 > credential, has no database, and has no testnet or live execution path. What
 > exists is the foundation (configuration, exact money arithmetic, data
@@ -12,7 +13,10 @@ Professional crypto trading and quantitative research platform.
 > deterministic and fully published Market Opportunity Score, eleven technical
 > indicators, a rule-based strategy analysis layer, a historical backtesting
 > engine, and a **paper trading engine** that simulates fills against real
-> observed prices behind a risk gate that has final authority.
+> observed prices behind a risk engine that has final authority, and an
+> autonomous loop that proposes orders without a human and is refused by that
+> engine exactly as a human would be. **Autonomous trading is off by default
+> and starts disarmed on every restart.**
 >
 > Paper state is **in-memory and resets on restart** — said on every response,
 > not buried here.
@@ -116,6 +120,9 @@ assert all of it.
 | `POST /api/v1/paper/positions/{symbol}/close` | Close at the observed price |
 | `POST /api/v1/paper/emergency-stop` | Block or unblock new entries |
 | `POST /api/v1/paper/reset` | Discard the paper account |
+| `/api/v1/paper/autonomous` | Loop state — off unless armed |
+| `/api/v1/paper/autonomous/decisions` | The audit trail, including idle iterations |
+| `POST /api/v1/paper/autonomous` | Arm or disarm the loop |
 
 See [docs/exchange.md](docs/exchange.md) for the exchange layer in detail.
 
@@ -147,7 +154,7 @@ backend/           FastAPI service (Python 3.12+)
     domain/        enums and value objects (pure)
     api/v1/        HTTP surface
     adapters/      exchange + persistence integrations   (phase 1+)
-    engines/       paper trading engine + risk gate      (phase 6)
+    engines/       paper engine (6) + risk engine (7)
   tests/           unit + integration
 docs/              architecture, setup, ADRs
 frontend/          Next.js terminal
@@ -174,6 +181,8 @@ frontend/          Next.js terminal
   the metrics and what is deliberately not simulated
 - [Paper trading](docs/paper-trading.md) — the risk gate, the fill model,
   paper vs testnet vs live, and why leverage stays at 1x
+- [Risk engine and autonomy](docs/autonomous-trading.md) — final authority,
+  the leverage ceiling derivation, the loop, and why it is off by default
 - [Setup](docs/setup.md) — environment, commands, quality gates
 - [ADRs](docs/adr/) — recorded decisions, including the open database question
 

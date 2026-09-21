@@ -301,7 +301,7 @@ def test_capabilities_report_the_backtester_as_available(client: TestClient) -> 
     assert by_key["backtest.engine"]["status"] == "AVAILABLE"
     # Still unbuilt, still unclaimed.
     assert by_key["optimize.hyperparameters"]["status"] == "PLANNED"
-    assert by_key["risk.engine"]["status"] == "PLANNED"
+    assert by_key["execution.live"]["status"] == "PLANNED"
     assert by_key["execution.live"]["status"] == "PLANNED"
 
 

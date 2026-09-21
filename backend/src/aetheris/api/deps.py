@@ -8,6 +8,7 @@ from fastapi import Depends, Request
 
 from aetheris.core.errors import UpstreamUnavailableError
 from aetheris.services.analysis import AnalysisService
+from aetheris.services.autonomous import AutonomousLoop
 from aetheris.services.backtest import BacktestService
 from aetheris.services.market_data import MarketDataService
 from aetheris.services.paper import PaperTradingService
@@ -76,3 +77,19 @@ def get_paper_service(request: Request) -> PaperTradingService:
 
 
 PaperDep = Annotated[PaperTradingService, Depends(get_paper_service)]
+
+
+def get_autonomous_loop(request: Request) -> AutonomousLoop:
+    """Resolve the process-wide autonomous loop.
+
+    Process-wide is load-bearing rather than merely efficient: the loop owns
+    the armed flag, the decision log and the background task. A per-request
+    instance would report a disarmed loop while the real one was trading.
+    """
+    loop = getattr(request.app.state, "autonomous_loop", None)
+    if not isinstance(loop, AutonomousLoop):
+        raise UpstreamUnavailableError("Autonomous trading is not configured")
+    return loop
+
+
+AutonomousDep = Annotated[AutonomousLoop, Depends(get_autonomous_loop)]

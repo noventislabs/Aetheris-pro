@@ -627,3 +627,87 @@ export interface PaperMethod {
   durability_notice: string;
   disclaimer: string;
 }
+// ----------------------------------------------------------------------
+// Phase 7: the risk engine and autonomous paper trading
+// ----------------------------------------------------------------------
+
+export type AutonomousAction =
+  | "ENTERED"
+  | "REFUSED"
+  | "MANAGED"
+  | "CLOSED"
+  | "NO_SIGNAL"
+  | "SKIPPED";
+
+export type AutonomousLoopState = "DISABLED_BY_CONFIG" | "DISARMED" | "ARMED" | "FAILED";
+
+export interface AutonomousDecision {
+  decision_id: string;
+  sequence: number;
+  decided_at: string;
+  symbol: string;
+  timeframe: Timeframe;
+  action: AutonomousAction;
+  detail: string;
+  bar_close_time: string | null;
+
+  strategy: string | null;
+  strategy_status: string | null;
+  bias: string | null;
+  /** Counts, deliberately not a ratio — 3/4 cannot be read as a likelihood. */
+  conditions_met: number | null;
+  conditions_total: number | null;
+
+  rejection_code: string | null;
+  rejection_detail: string | null;
+  leverage: LeverageDecision | null;
+  risk_max_leverage: string | null;
+  /** Named checks the risk engine ran, in order — including the ones that passed. */
+  checks_performed: string[];
+
+  side: OrderSide | null;
+  position_side: PositionSide | null;
+  exit_reason: PaperExitReason | null;
+  client_order_id: string | null;
+  order_id: string | null;
+  position_id: string | null;
+  trade_id: string | null;
+  proposed_margin: string | null;
+  realized_pnl: string | null;
+
+  source: string | null;
+  data_status: string | null;
+  data_age_seconds: number | null;
+  atr_percent: string | null;
+  label: string;
+}
+
+export interface AutonomousStatus {
+  state: AutonomousLoopState;
+  /** False on every process start, whatever it was before a restart. */
+  enabled: boolean;
+  /** Gates arming; never arms on its own. */
+  permitted_by_config: boolean;
+  paper_mode_enabled: boolean;
+  symbols: string[];
+  excluded_symbols: Record<string, string>;
+  timeframe: Timeframe | null;
+  interval_seconds: number | null;
+  iterations: number;
+  decisions_recorded: number;
+  entries: number;
+  refusals: number;
+  closes: number;
+  last_iteration_at: string | null;
+  last_iteration_duration_seconds: number | null;
+  /** Set only when the loop failed — a silent death must not look like a quiet market. */
+  failure_detail: string | null;
+  venue_outage: boolean;
+  disclaimer: string;
+}
+
+export interface AutonomousDecisions {
+  count: number;
+  decisions: AutonomousDecision[];
+  detail: string;
+}

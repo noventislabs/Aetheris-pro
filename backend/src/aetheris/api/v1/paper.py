@@ -29,11 +29,12 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Annotated
 
-from fastapi import APIRouter, Body, Path
+from fastapi import APIRouter, Body, Path, Query
 from pydantic import BaseModel, ConfigDict, Field
 
-from aetheris.api.deps import PaperDep
+from aetheris.api.deps import AutonomousDep, PaperDep
 from aetheris.core.errors import RiskRejectionCode
+from aetheris.domain.autonomous import AutonomousDecision, AutonomousStatus
 from aetheris.domain.enums import OrderSide
 from aetheris.domain.leverage import LEVERAGE_MAX, LEVERAGE_MIN
 from aetheris.domain.paper import (
@@ -308,7 +309,7 @@ async def emergency_stop(
     are never force-closed, because an emergency switch that fires market
     orders is itself a way to lose money badly.
     """
-    return service.set_emergency_stop(engaged=body.engaged, reason=body.reason)
+    return await service.set_emergency_stop(engaged=body.engaged, reason=body.reason)
 
 
 @router.post("/reset", response_model=PaperAccount, summary="Discard the paper account")
@@ -320,4 +321,83 @@ async def reset(
     Irreversible, and there is nothing to recover from: the state was never
     durable. Positions, orders, trades and the day's session all go.
     """
-    return service.reset(starting_balance=body.starting_balance)
+    return await service.reset(starting_balance=body.starting_balance)
+
+
+# ----------------------------------------------------------------------
+# Autonomous paper trading (phase 7)
+#
+# One write route, under the existing /paper namespace, so ADR 0003's
+# invariant is unchanged: writes exist only here, against simulation state.
+# ----------------------------------------------------------------------
+
+
+class ArmBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool
+
+
+class DecisionsResponse(BaseModel):
+    """The audit trail, newest first."""
+
+    count: int
+    decisions: tuple[AutonomousDecision, ...]
+    detail: str
+
+
+@router.get(
+    "/autonomous",
+    response_model=AutonomousStatus,
+    summary="Whether the autonomous loop is running",
+)
+async def autonomous_status(loop: AutonomousDep) -> AutonomousStatus:
+    """Report the loop's state, including when it is off.
+
+    `enabled` is **false on every process start**, whatever it was before a
+    restart. A process that crashed and came back trading unattended, against
+    an account it does not remember, is the worst outcome available here.
+    """
+    return loop.status()
+
+
+@router.get(
+    "/autonomous/decisions",
+    response_model=DecisionsResponse,
+    summary="What the loop decided, and why",
+)
+async def autonomous_decisions(
+    loop: AutonomousDep,
+    limit: Annotated[int, Query(ge=1, le=500)] = 100,
+) -> DecisionsResponse:
+    """The bounded decision log.
+
+    Every iteration records one entry per symbol it looked at, **including the
+    ones where nothing happened**. "The loop did nothing for six hours" has to
+    be distinguishable from "the loop was not running", and both from "the loop
+    died quietly", which a log of only the interesting entries cannot do.
+    """
+    decisions = loop.decisions(limit)
+    return DecisionsResponse(
+        count=len(decisions),
+        decisions=decisions,
+        detail=("Newest first. Bounded in memory and lost on restart, like all paper state."),
+    )
+
+
+@router.post(
+    "/autonomous",
+    response_model=AutonomousStatus,
+    summary="Arm or disarm autonomous paper trading",
+)
+async def set_autonomous(loop: AutonomousDep, body: Annotated[ArmBody, Body()]) -> AutonomousStatus:
+    """Arm or disarm the loop. The only way it ever starts.
+
+    Three independent conditions are required to arm: configuration must
+    permit it, paper mode must be enabled, and this call must be made.
+    Configuration alone never starts it, and arming does not survive a restart.
+
+    Arming changes nothing about authority. Every proposal the loop makes goes
+    through the risk engine and then, independently, through the paper gate.
+    """
+    return await loop.arm(enabled=body.enabled)

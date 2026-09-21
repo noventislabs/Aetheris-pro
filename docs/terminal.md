@@ -208,8 +208,15 @@ the moment the numbers start meaning something they do not mean:
 
 - the `PAPER / SIMULATION ONLY / NO REAL ORDER` badge;
 - `PAPER STATE: IN-MEMORY — RESETS ON RESTART`;
-- that management runs **only while the page is open** — there is no
-  server-side loop, so closing the tab stops stops being evaluated.
+- that management runs only while the page is open **when the phase 7
+  autonomous loop is disarmed**, which is the default. With it armed the server
+  polls on its own and the tab can be closed.
+
+The autonomy panel states the loop's state as a badge rather than a subtle
+toggle position, because "is this thing trading right now?" should be
+answerable from across a room. Its decision log shows every iteration,
+including `NO_SIGNAL` and `SKIPPED` rows — a log of only the interesting entries
+cannot distinguish an idle loop from a dead one.
 
 Refusals are rendered as prominently as fills, with their `RISK_REJECTED_*`
 code and the full leverage constraint chain. A risk limit that fires silently

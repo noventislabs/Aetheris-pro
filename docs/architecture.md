@@ -1,6 +1,6 @@
 # Aetheris Pro — Architecture
 
-> Status: Phase 6 (paper trading engine). This
+> Status: Phase 7 (risk engine and autonomous paper trading). This
 > document describes the intended shape of
 > the whole system and marks clearly which parts exist today. Anything not
 > marked **implemented** is not built, and the running service reports the same
@@ -246,6 +246,31 @@ data; `check_authority` and three regression tests are the fix.
 
 Detail in [paper-trading.md](paper-trading.md).
 
+## 9g. Risk engine and autonomy (phase 7)
+
+`engines/risk/` is the mode-independent authority: a pure function over a
+policy, an account view and a market view, returning an approval with a size or
+a refusal with a `RISK_REJECTED_*` code. Everything upstream proposes.
+
+`services/autonomous.py` is the first component that acts without a human. It
+is an `asyncio` task in the application process -- paper state is in-memory, so
+a second process would trade a different account -- and it is **off by default**
+with three independent conditions required to arm it.
+
+Two properties are worth restating because they are easy to lose:
+
+* **Two gates.** The risk engine rules first, the phase 6 paper gate re-checks
+  independently. Neither trusts the other.
+* **Building the authority did not unlock leverage.** `risk_max_leverage` is now
+  derived and reported, but `exchange_max_leverage` still needs an authenticated
+  endpoint, so the chain refuses above 1x exactly as before.
+
+The loop depends on `PaperEngine` concretely. There is deliberately no
+`ExecutionPort` a venue adapter could later satisfy, and no method takes a
+`TradingMode` -- pointing autonomy at a venue requires new code, not new config.
+
+Detail in [autonomous-trading.md](autonomous-trading.md).
+
 ## 9f. The route surface, and how it changed
 
 Phases 0–5 asserted that no route uses a method other than GET. Phase 6 makes
@@ -291,8 +316,9 @@ The invariant narrowed rather than disappearing. Two assertions replace it:
 | Paper trading engine (orders, fills, positions, PnL) | implemented, tested |
 | Paper entry risk gate (`RISK_REJECTED_*` refusals) | implemented, tested |
 | Paper state persistence | **in-memory only**, resets on restart (phase 1) |
-| Autonomous paper trading | **not started** (phase 7) |
-| Risk engine, portfolio | **not started** (phase 7) |
+| Autonomous paper trading (off by default) | implemented, tested |
+| Risk engine (final authority over every proposal) | implemented, tested |
+| Portfolio accounting | **not started** (phase 7+) |
 | Order engine, testnet, live | **not started** (phases 8, 10) |
 | AI / Falcon | **not started** (phase 9) |
 | Frontend terminal (markets, scanner, backtest, paper) | implemented, tested |

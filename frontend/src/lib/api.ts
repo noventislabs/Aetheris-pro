@@ -15,6 +15,8 @@
 
 import type {
   ApiErrorBody,
+  AutonomousDecisions,
+  AutonomousStatus,
   BacktestResult,
   PaperAccount,
   PaperMethod,
@@ -516,4 +518,47 @@ export function setPaperEmergencyStop(
   signal?: AbortSignal,
 ): Promise<PaperAccount> {
   return request("/api/v1/paper/emergency-stop", isPaperAccount, signal, { engaged, reason });
+}
+
+
+// ----------------------------------------------------------------------
+// Autonomous paper trading
+// ----------------------------------------------------------------------
+
+function isAutonomousStatus(value: unknown): value is AutonomousStatus {
+  return (
+    isRecord(value) &&
+    hasString(value, "state") &&
+    typeof value["enabled"] === "boolean" &&
+    typeof value["permitted_by_config"] === "boolean" &&
+    hasString(value, "disclaimer")
+  );
+}
+
+function isAutonomousDecisions(value: unknown): value is AutonomousDecisions {
+  return (
+    isRecord(value) && typeof value["count"] === "number" && Array.isArray(value["decisions"])
+  );
+}
+
+export function getAutonomousStatus(signal?: AbortSignal): Promise<AutonomousStatus> {
+  return request("/api/v1/paper/autonomous", isAutonomousStatus, signal);
+}
+
+export function getAutonomousDecisions(
+  limit = 50,
+  signal?: AbortSignal,
+): Promise<AutonomousDecisions> {
+  return request(
+    `/api/v1/paper/autonomous/decisions?limit=${limit}`,
+    isAutonomousDecisions,
+    signal,
+  );
+}
+
+export function setAutonomous(
+  enabled: boolean,
+  signal?: AbortSignal,
+): Promise<AutonomousStatus> {
+  return request("/api/v1/paper/autonomous", isAutonomousStatus, signal, { enabled });
 }

@@ -269,7 +269,7 @@ def test_capabilities_report_the_scanner_as_available(client: TestClient) -> Non
     assert by_key["analysis.indicators"]["status"] == "AVAILABLE"
     assert by_key["analysis.smc"]["status"] == "PLANNED"
     assert by_key["ai.analysis"]["status"] == "PLANNED"
-    assert by_key["risk.engine"]["status"] == "PLANNED"
+    assert by_key["order.engine"]["status"] == "PLANNED"
 
 
 def test_scanner_exposes_no_write_route(client: TestClient) -> None:

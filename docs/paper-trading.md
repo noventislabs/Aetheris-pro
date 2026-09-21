@@ -148,10 +148,17 @@ simulations are comparable. Configurable via `AETHERIS_PAPER_TAKER_FEE_BPS`.
 
 ## 7. Position management is poll-driven
 
-There is **no server-side loop**. Stops, targets, trailing stops and liquidation
-are evaluated when `POST /paper/tick` is called, which the terminal does every
-5 seconds while the page is open. Close the tab and nothing is evaluated until
-you return.
+Stops, targets, trailing stops and liquidation are evaluated on a poll, never
+continuously. **Who polls depends on phase 7's autonomous loop:**
+
+- **Loop armed** — the server polls on its own interval (30s by default). The
+  page can be closed; management continues.
+- **Loop disarmed, which is the default** — there is no server-side loop, and
+  management happens only when `POST /paper/tick` is called. The terminal does
+  that every 5 seconds *while the page is open*. Close the tab and nothing is
+  evaluated until you return.
+
+See [autonomous-trading.md](autonomous-trading.md).
 
 Three consequences, stated rather than discovered:
 
@@ -308,9 +315,9 @@ beside the numbers.
 
 ## 13. Not in this phase
 
-**Autonomous paper trading** is registered `PLANNED`. `autonomous_enabled` is
-`false`, there is no setter, and no loop exists to turn on — a toggle that did
-nothing would be worse than no toggle.
+**Autonomous paper trading** shipped in phase 7 and is **off by default**.
+Arming needs configuration, paper mode and a deliberate call, and does not
+survive a restart. See [autonomous-trading.md](autonomous-trading.md).
 
 Partial fills, a persistent store, multi-account isolation, and any form of real
 execution all belong to later phases and none is claimed here. Ask the running

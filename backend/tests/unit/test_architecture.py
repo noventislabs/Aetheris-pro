@@ -315,3 +315,158 @@ def test_the_trading_port_still_has_no_implementation_after_paper_shipped() -> N
     assert not isinstance(engine, TradingPort)
     for method in ("create_order", "cancel_order", "get_balance", "get_positions"):
         assert not hasattr(BinanceFuturesMarketDataAdapter, method)
+
+
+# ----------------------------------------------------------------------
+# Phase 7: the risk engine and the autonomous loop
+# ----------------------------------------------------------------------
+
+RISK_ROOT = PACKAGE_ROOT / "engines" / "risk"
+
+
+def risk_source_files() -> list[pathlib.Path]:
+    return sorted(RISK_ROOT.rglob("*.py"))
+
+
+def test_there_are_risk_engine_modules_to_check() -> None:
+    assert len(risk_source_files()) >= 4
+
+
+@pytest.mark.parametrize("path", risk_source_files(), ids=lambda p: p.name)
+def test_the_risk_engine_is_pure(path: pathlib.Path) -> None:
+    """The final authority must be callable with no network and no framework.
+
+    That is what makes the whole envelope testable in-process, and it is why
+    the autonomous loop cannot reach an exchange through it.
+    """
+    offenders = {
+        module for module in imported_modules(path) if module.startswith(FORBIDDEN_PREFIXES)
+    }
+    assert not offenders, (
+        f"{path.relative_to(PACKAGE_ROOT)} imports {sorted(offenders)}; the risk "
+        "engine must stay free of transport, frameworks and venues"
+    )
+
+
+def test_venue_names_do_not_leak_into_the_risk_engine() -> None:
+    for path in risk_source_files():
+        source = path.read_text(encoding="utf-8").lower()
+        assert "binance" not in source, (
+            f"{path.relative_to(PACKAGE_ROOT)} mentions a specific venue"
+        )
+
+
+#: Words that would misrepresent what this system produces. A deterministic
+#: reading of named conditions is not a confidence, and a risk ceiling derived
+#: from stop distance is not a prediction. Phase 7 is where that pressure is
+#: highest, because an autonomous loop invites being described as if it knew
+#: something.
+FORBIDDEN_VOCABULARY = (
+    "confidence",
+    "probability of profit",
+    "win probability",
+    "win rate",
+    "expected return",
+    "prediction",
+    "predicted",
+    "forecast",
+    "ai-selected",
+    "guaranteed",
+)
+
+PHASE_7_MODULES = (
+    PACKAGE_ROOT / "engines" / "risk",
+    PACKAGE_ROOT / "services" / "autonomous.py",
+    PACKAGE_ROOT / "domain" / "autonomous.py",
+)
+
+
+def phase_7_source_files() -> list[pathlib.Path]:
+    files: list[pathlib.Path] = []
+    for target in PHASE_7_MODULES:
+        files.extend(sorted(target.rglob("*.py")) if target.is_dir() else [target])
+    return files
+
+
+@pytest.mark.parametrize("term", FORBIDDEN_VOCABULARY)
+def test_phase_7_modules_never_claim_to_predict(term: str) -> None:
+    """Asserted against the source, including comments and docstrings.
+
+    A docstring that describes a condition count as a confidence is how the
+    misreading spreads: it gets copied into an API description, then into a UI
+    string, then into a screenshot. The words are banned at the source.
+
+    Denials are permitted -- a module may say it is *not* a prediction -- so the
+    check looks for the term outside a negating context. The previous line is
+    included in that context because these denials are prose and wrap.
+    """
+    negations = ("not", "never", "no ", "nor ", "rather than", "cannot", "without")
+    for path in phase_7_source_files():
+        lines = path.read_text(encoding="utf-8").splitlines()
+        for number, line in enumerate(lines, 1):
+            lowered = line.lower()
+            if term not in lowered:
+                continue
+            context = (lines[number - 2].lower() if number >= 2 else "") + " " + lowered
+            assert any(marker in context for marker in negations), (
+                f"{path.relative_to(PACKAGE_ROOT)}:{number} uses {term!r} without "
+                f"denying it: {line.strip()!r}"
+            )
+
+
+def test_the_autonomous_loop_cannot_reach_a_venue_order_endpoint() -> None:
+    """The loop acts on its own, so this guarantee matters more here than anywhere."""
+    from aetheris.services.autonomous import AutonomousLoop
+
+    loop = AutonomousLoop.__new__(AutonomousLoop)
+    assert not isinstance(loop, TradingPort)
+    for method in ("create_order", "cancel_order", "get_balance", "get_positions"):
+        assert not hasattr(AutonomousLoop, method)
+
+
+def test_the_autonomous_loop_names_no_credential_or_withdrawal_concept() -> None:
+    source = (PACKAGE_ROOT / "services" / "autonomous.py").read_text(encoding="utf-8").lower()
+    for token in ("api_key", "apikey", "api_secret", "signature", "hmac", "withdraw"):
+        assert token not in source, f"services/autonomous.py names {token}"
+
+
+def test_the_autonomous_loop_depends_on_the_paper_engine_not_an_execution_port() -> None:
+    """The structural barrier between paper autonomy and future live execution.
+
+    There is deliberately no ``ExecutionPort`` a testnet adapter could later
+    satisfy. Pointing this loop at a venue requires writing new code and
+    changing its type, not flipping a config value -- which is the difference
+    between a deliberate phase and an accident.
+    """
+    import inspect
+
+    from aetheris.services.autonomous import AutonomousLoop
+    from aetheris.services.paper import PaperTradingService
+
+    signature = inspect.signature(AutonomousLoop.__init__)
+    annotation = signature.parameters["paper"].annotation
+    assert annotation in (PaperTradingService, "PaperTradingService")
+
+    source = (PACKAGE_ROOT / "services" / "autonomous.py").read_text(encoding="utf-8")
+    assert "ExecutionPort" not in source
+    # TradingPort may be *named* -- the module docstring says none exists to
+    # inject, which is the point -- but it must never be imported.
+    for line in source.splitlines():
+        if line.startswith(("import ", "from ")):
+            assert "TradingPort" not in line, "the loop must not import an execution port"
+
+
+def test_the_autonomous_loop_takes_no_trading_mode_parameter() -> None:
+    """The mode is not a parameter, so there is no ``mode=LIVE`` to pass."""
+    import inspect
+
+    from aetheris.services.autonomous import AutonomousLoop
+
+    for name, method in inspect.getmembers(AutonomousLoop, inspect.isfunction):
+        if name.startswith("__"):
+            continue
+        for parameter in inspect.signature(method).parameters.values():
+            assert "TradingMode" not in str(parameter.annotation), (
+                f"AutonomousLoop.{name} takes a trading mode; autonomy is a paper "
+                "component and must not be pointed at another mode by argument"
+            )

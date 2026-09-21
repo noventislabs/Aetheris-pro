@@ -25,6 +25,7 @@ from aetheris.core.logging import configure_logging, get_logger
 from aetheris.engines.paper.engine import PaperEngine, PaperEngineConfig
 from aetheris.engines.paper.store import InMemoryPaperRepository
 from aetheris.services.analysis import AnalysisService
+from aetheris.services.autonomous import AutonomousLoop
 from aetheris.services.backtest import BacktestService
 from aetheris.services.market_data import MarketDataService
 from aetheris.services.paper import PaperTradingService
@@ -36,6 +37,7 @@ _log = get_logger("app")
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings: Settings = app.state.settings
+    loop: AutonomousLoop = app.state.autonomous_loop
     _log.info(
         "startup",
         version=__version__,
@@ -43,12 +45,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         default_mode=settings.default_mode,
         enabled_modes=[m.value for m in settings.enabled_modes],
         autonomous_trading_enabled=settings.autonomous_trading_enabled,
+        autonomous_armed=loop.armed,
+        autonomous_symbols=len(settings.autonomous.symbols),
         exchange=app.state.market_data_service.exchange_name,
     )
+    # Creating the task is not arming it. The loop idles until somebody calls
+    # the arm endpoint, and starts disarmed on every boot however it was left.
+    loop.start()
     try:
         yield
     finally:
-        # Release the exchange connection pool even if startup partly failed.
+        # Both of these must run even if startup partly failed, and the loop
+        # must stop before the connection pool it uses is closed underneath it.
+        await loop.aclose()
         await app.state.market_data_service.aclose()
         _log.info("shutdown")
 
@@ -122,6 +131,9 @@ def create_app(
     app.state.analysis_service = AnalysisService(exchange, settings.analysis)
     app.state.backtest_service = BacktestService(exchange, settings.backtest)
     app.state.paper_service = _build_paper_service(app.state.market_data_service, settings)
+    app.state.autonomous_loop = AutonomousLoop(
+        app.state.market_data_service, app.state.paper_service, settings
+    )
 
     # Middleware executes bottom-up, so RequestContextMiddleware is added last
     # and therefore runs first -- every log line below it carries a request ID.

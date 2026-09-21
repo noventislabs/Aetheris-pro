@@ -65,7 +65,7 @@ def test_system_status_reports_spec_risk_defaults(client: TestClient) -> None:
 def test_capabilities_endpoint_lists_planned_work(client: TestClient) -> None:
     capabilities = client.get("/api/v1/system/capabilities").json()["capabilities"]
     by_key = {c["key"]: c for c in capabilities}
-    assert by_key["risk.engine"]["status"] == "PLANNED"
+    assert by_key["order.engine"]["status"] == "PLANNED"
     assert by_key["core.money"]["status"] == "AVAILABLE"
 
 

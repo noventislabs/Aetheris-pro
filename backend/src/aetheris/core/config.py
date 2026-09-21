@@ -19,7 +19,7 @@ from urllib.parse import urlparse
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from aetheris.domain.enums import TradingMode
+from aetheris.domain.enums import Timeframe, TradingMode
 
 
 class RiskSettings(BaseSettings):
@@ -236,6 +236,89 @@ class PaperTradingSettings(BaseSettings):
     max_trade_log: int = Field(default=200, ge=10, le=5000)
 
 
+class AutonomousSettings(BaseSettings):
+    """Bounds for the autonomous paper-trading loop.
+
+    Every default here is chosen so that a deployment which sets nothing does
+    nothing: the universe is empty, so an armed loop evaluates no symbols and
+    says so. Autonomy that picks its own instruments on first run would be a
+    system choosing what to trade before anyone asked it to.
+    """
+
+    model_config = SettingsConfigDict(env_prefix="AETHERIS_AUTO_", extra="ignore")
+
+    #: Symbols the loop watches. **Empty by default and deliberately so.**
+    #: Nothing is inferred from volume, from a scanner ranking, or from what
+    #: happens to be liquid today.
+    symbols: list[str] = Field(default_factory=list)
+
+    timeframe: Timeframe = Field(
+        default=Timeframe.M15, description="Decision timeframe; closed bars only"
+    )
+    interval_seconds: float = Field(
+        default=30.0,
+        ge=5.0,
+        le=3600.0,
+        description="Between iterations. Governs management latency, not entry frequency.",
+    )
+    max_symbols: int = Field(
+        default=5, ge=1, le=25, description="Hard ceiling on symbols evaluated per iteration"
+    )
+    candle_limit: int = Field(default=300, ge=60, le=1000)
+
+    #: Percent of *available* balance posted as margin. Matches the backtest
+    #: engine's position_size_percent semantic so the two stay comparable.
+    position_size_percent: Decimal = Field(default=Decimal("10"), gt=0, le=100)
+
+    #: A request, never an authorisation. Above 1 the constraint chain refuses,
+    #: because the venue ceiling is unknown; the default keeps the loop
+    #: functional rather than perpetually self-refusing.
+    requested_leverage: Decimal = Field(default=Decimal("1"), ge=1, le=500)
+
+    stop_loss_percent: Decimal | None = Field(default=Decimal("2"), gt=0, lt=100)
+    take_profit_percent: Decimal | None = Field(default=Decimal("4"), gt=0, lt=100)
+    trailing_stop_percent: Decimal | None = Field(default=None, gt=0, lt=100)
+
+    #: Close a position whose strategy bias now opposes it. NEUTRAL never
+    #: closes -- indecision is not opposition.
+    close_on_signal_flip: bool = True
+
+    #: Measured ATR as a percent of price. Above this, entries are refused with
+    #: ABNORMAL_VOLATILITY. A measurement threshold, never a forecast.
+    max_atr_percent: Decimal = Field(default=Decimal("15"), gt=0, le=100)
+
+    #: Drop a symbol from the session after this many consecutive failures, so
+    #: a delisted or permanently broken instrument stops costing quota.
+    max_consecutive_failures: int = Field(default=10, ge=1, le=100)
+    #: Iterations in which *every* symbol failed before the loop treats it as a
+    #: venue outage and lengthens its interval.
+    outage_iterations: int = Field(default=5, ge=1, le=100)
+    outage_backoff_multiplier: float = Field(default=4.0, ge=1.0, le=60.0)
+
+    #: In-memory and bounded, like every other log in this build.
+    max_decision_log: int = Field(default=500, ge=10, le=5000)
+
+    @field_validator("symbols")
+    @classmethod
+    def _normalise_symbols(cls, value: list[str]) -> list[str]:
+        """Upper-case, de-duplicate, and reject anything that is not a symbol.
+
+        Operator configuration rather than request input, but validated anyway:
+        a typo should fail at startup rather than produce a loop quietly
+        watching nothing.
+        """
+        seen: list[str] = []
+        for raw in value:
+            symbol = raw.strip().upper()
+            if not symbol:
+                continue
+            if not symbol.isalnum():
+                raise ValueError(f"{raw!r} is not a valid symbol")
+            if symbol not in seen:
+                seen.append(symbol)
+        return seen
+
+
 class Settings(BaseSettings):
     """Top-level application settings."""
 
@@ -280,6 +363,7 @@ class Settings(BaseSettings):
     analysis: AnalysisSettings = Field(default_factory=AnalysisSettings)
     backtest: BacktestSettings = Field(default_factory=BacktestSettings)
     paper: PaperTradingSettings = Field(default_factory=PaperTradingSettings)
+    autonomous: AutonomousSettings = Field(default_factory=AutonomousSettings)
 
     @model_validator(mode="after")
     def _live_requires_two_switches(self) -> Self:

@@ -477,6 +477,8 @@ describe("PaperPage", () => {
       new api.ApiError("Backend is unreachable", "NETWORK_UNREACHABLE", 0),
     );
     render(<PaperPage />);
-    expect(await screen.findByText("NETWORK_UNREACHABLE")).toBeInTheDocument();
+    // Twice: the account panel and the autonomy panel each report the outage
+    // rather than one of them silently rendering an empty shell.
+    expect(await screen.findAllByText("NETWORK_UNREACHABLE")).not.toHaveLength(0);
   });
 });

@@ -25,23 +25,46 @@ def test_unknown_capability_fails_closed() -> None:
 def test_real_execution_capabilities_are_not_claimed_in_this_build() -> None:
     """Nothing that could move real money may report as built.
 
-    ``paper.engine`` left this list in phase 6, which is the distinction the
-    registry exists to make: a simulation that places no order is a delivered
-    capability, while anything that reaches a venue is not.
+    ``paper.engine`` left this list in phase 6 and ``risk.engine`` /
+    ``paper.autonomous`` in phase 7, which is the distinction the registry
+    exists to make: a simulation that places no order is a delivered
+    capability, and so is the authority that refuses one, while anything that
+    reaches a venue is not.
     """
     for key in (
-        "risk.engine",
         "order.engine",
         "execution.testnet",
         "execution.live",
         "falcon.command_center",
-        "paper.autonomous",
+        "portfolio.engine",
     ):
         capability = get_capability(key)
         assert capability is not None
         assert capability.status is CapabilityStatus.PLANNED, (
             f"{key} claims {capability.status} but no engine is implemented"
         )
+
+
+def test_autonomous_trading_states_that_it_is_off_by_default() -> None:
+    """The registry must not imply a loop is running when none is armed."""
+    autonomous = get_capability("paper.autonomous")
+    assert autonomous is not None
+    assert autonomous.status is CapabilityStatus.AVAILABLE
+    assert "OFF by default" in autonomous.detail
+    assert "NO real order" in autonomous.detail
+
+
+def test_the_risk_engine_does_not_claim_to_unlock_leverage() -> None:
+    """Phase 7 builds the authority; it does not obtain a venue ceiling.
+
+    Claiming otherwise would be the single most misleading thing this registry
+    could say, because the chain still refuses above 1x.
+    """
+    engine = get_capability("risk.engine")
+    assert engine is not None
+    assert engine.status is CapabilityStatus.AVAILABLE
+    assert "above 1x still fails closed" in engine.detail
+    assert "authenticated endpoint" in engine.detail
 
 
 def test_paper_state_durability_is_disclosed_as_partial() -> None:

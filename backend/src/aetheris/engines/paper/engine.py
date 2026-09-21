@@ -278,8 +278,16 @@ class PaperEngine:
         leverage: LeverageDecision,
         paper_enabled: bool,
         marks: Mapping[str, MarkPrice] | None = None,
+        risk_verdict_detail: str | None = None,
     ) -> PaperOrderResult:
-        """Open a position, or explain precisely why not."""
+        """Open a position, or explain precisely why not.
+
+        ``risk_verdict_detail`` is provenance only: when a phase 7 risk engine
+        ruled on this order first, its verdict is recorded on the result. It is
+        **never** read as permission. Every check below runs identically
+        whether or not something upstream already approved the order, which is
+        what makes two independent gates two gates rather than one.
+        """
         state = self._repository.load()
         self._ensure_session(state, now)
         symbol = request.symbol.upper()
@@ -437,6 +445,7 @@ class PaperEngine:
             leverage=leverage,
             now=now,
             marks=all_marks,
+            risk_verdict_detail=risk_verdict_detail,
         )
 
     def tick(
@@ -736,6 +745,7 @@ class PaperEngine:
         leverage: LeverageDecision,
         now: datetime,
         marks: Mapping[str, MarkPrice],
+        risk_verdict_detail: str | None = None,
     ) -> PaperOrderResult:
         approved = leverage.approved_leverage
         if approved is None:  # pragma: no cover - checked by the caller
@@ -812,6 +822,7 @@ class PaperEngine:
             leverage=leverage,
             created_at=now,
             updated_at=now,
+            risk_verdict_detail=risk_verdict_detail,
         )
         state.orders_by_client_id[client_order_id] = order
         self._record_order(state, order)

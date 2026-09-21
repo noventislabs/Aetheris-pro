@@ -30,7 +30,7 @@ class CapabilityStatus(StrEnum):
 #: Phases whose work is merged and tested. A capability may only be marked
 #: AVAILABLE if its phase appears here, which keeps the registry from
 #: drifting ahead of delivery one optimistic edit at a time.
-DELIVERED_PHASES: frozenset[int] = frozenset({0, 2, 3, 4, 5, 6})
+DELIVERED_PHASES: frozenset[int] = frozenset({0, 2, 3, 4, 5, 6, 7})
 
 
 class Capability(BaseModel):
@@ -244,12 +244,14 @@ CAPABILITIES: tuple[Capability, ...] = (
     Capability(
         key="paper.autonomous",
         name="Autonomous paper trading",
-        status=CapabilityStatus.PLANNED,
+        status=CapabilityStatus.AVAILABLE,
         phase=7,
         detail=(
-            "A loop that opens and closes paper positions from strategy signals "
-            "without a human. Not built, and not switchable on: autonomous trading "
-            "is off and there is no code path that turns it on."
+            "A server-side loop that opens and closes PAPER positions from strategy "
+            "output without a human. OFF by default and on every restart: arming "
+            "needs configuration, paper mode, and a deliberate call. Places NO real "
+            "order. The watched universe is empty unless configured -- it never picks "
+            "instruments on its own."
         ),
     ),
     Capability(
@@ -268,12 +270,15 @@ CAPABILITIES: tuple[Capability, ...] = (
     Capability(
         key="risk.engine",
         name="Risk engine",
-        status=CapabilityStatus.PLANNED,
+        status=CapabilityStatus.AVAILABLE,
         phase=7,
         detail=(
-            "Final authority over every order decision, including the approved "
-            "leverage. Vocabulary and the leverage constraint chain are defined; "
-            "the engine itself is not built."
+            "Final authority over every proposed order: mode, emergency stop, daily "
+            "locks, data freshness, cooldown, measured volatility, position slots, "
+            "leverage, venue filters, exposure and balance. Refusals carry a named "
+            "RISK_REJECTED_* code. It derives and reports a risk leverage ceiling, "
+            "but leverage above 1x still fails closed because the venue's per-symbol "
+            "maximum needs an authenticated endpoint this build does not have."
         ),
     ),
     Capability(

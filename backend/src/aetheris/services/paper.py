@@ -8,10 +8,28 @@ decision that follows is the engine's.
 **It still places no order.** The exchange dependency is the read-only
 ``MarketDataPort`` -- the same one the terminal and the backtester use. There
 is no trading port implementation to inject, in this service or anywhere else.
+
+**Serialising writes (phase 7).** Until the autonomous loop existed there was
+exactly one writer: the HTTP request. The loop is a second, and every mutating
+path here does a read-modify-write *across an await* -- it fetches prices, then
+mutates state. Two operations can therefore interleave at the await point, and
+the second acts on a view taken before the first mutated.
+
+``PaperEngine``'s methods are synchronous, so state cannot be corrupted: an
+engine call is atomic within the event loop. The hazard is subtler. Two
+concurrent submissions for the same symbol can *both* pass the
+"is this symbol already open?" check before either opens anything, and the
+account ends up with a position it refused to allow.
+
+``_write_lock`` closes that window by covering the whole fetch-then-mutate
+sequence rather than just the mutation. Reads do not take it: a snapshot one
+moment out of date is not a correctness problem, and blocking reads behind
+writes would make the terminal stutter whenever the loop is working.
 """
 
 from __future__ import annotations
 
+import asyncio
 from decimal import Decimal
 
 from aetheris.adapters.exchange.errors import SymbolNotFoundError
@@ -76,6 +94,9 @@ class PaperTradingService:
         self._market_data = market_data
         self._engine = engine
         self._settings = settings
+        #: Covers each fetch-then-mutate sequence. See the module docstring for
+        #: the interleaving this prevents.
+        self._write_lock = asyncio.Lock()
 
     @property
     def engine(self) -> PaperEngine:
@@ -156,15 +177,36 @@ class PaperTradingService:
 
     async def tick(self) -> tuple[PaperAccount, tuple[PaperTrade, ...]]:
         """Run one position-management pass against fresh prices."""
-        return self._engine.tick(now=utcnow(), marks=await self._open_marks())
+        async with self._write_lock:
+            return self._engine.tick(now=utcnow(), marks=await self._open_marks())
 
     async def submit_order(
         self,
         request: SubmitOrderRequest,
         *,
         requested_leverage: Decimal,
+        risk_verdict_detail: str | None = None,
     ) -> PaperOrderResult:
         """Resolve the leverage chain, then submit to the engine's risk gate."""
+        async with self._write_lock:
+            return await self._submit_locked(
+                request,
+                requested_leverage=requested_leverage,
+                risk_verdict_detail=risk_verdict_detail,
+            )
+
+    async def _submit_locked(
+        self,
+        request: SubmitOrderRequest,
+        *,
+        requested_leverage: Decimal,
+        risk_verdict_detail: str | None = None,
+    ) -> PaperOrderResult:
+        """The body of ``submit_order``, run under the write lock.
+
+        Split out so the lock is acquired once at the boundary rather than
+        being threaded through every early return.
+        """
         symbol = request.symbol.upper()
         now = utcnow()
         marks = await self._open_marks()
@@ -209,21 +251,38 @@ class PaperTradingService:
             leverage=decision,
             paper_enabled=self.paper_enabled,
             marks=marks,
+            risk_verdict_detail=risk_verdict_detail,
         )
 
     async def close_position(
         self, symbol: str, *, reason: PaperExitReason = PaperExitReason.MANUAL_CLOSE
     ) -> PaperOrderResult:
-        marks = await self._open_marks()
-        key = symbol.upper()
-        mark = marks.get(key) or await self._mark(key)
-        return self._engine.close_position(key, now=utcnow(), mark=mark, reason=reason, marks=marks)
+        async with self._write_lock:
+            marks = await self._open_marks()
+            key = symbol.upper()
+            mark = marks.get(key) or await self._mark(key)
+            return self._engine.close_position(
+                key, now=utcnow(), mark=mark, reason=reason, marks=marks
+            )
 
-    def reset(self, *, starting_balance: Decimal | None = None) -> PaperAccount:
-        return self._engine.reset(now=utcnow(), starting_balance=starting_balance)
+    async def reset(self, *, starting_balance: Decimal | None = None) -> PaperAccount:
+        """Discard the account.
 
-    def set_emergency_stop(self, *, engaged: bool, reason: str) -> PaperAccount:
-        return self._engine.set_emergency_stop(engaged=engaged, reason=reason, now=utcnow())
+        Async, and holding the write lock, although the engine call itself is
+        synchronous: resetting underneath an in-flight submission would let a
+        fill land in an account that no longer exists.
+        """
+        async with self._write_lock:
+            return self._engine.reset(now=utcnow(), starting_balance=starting_balance)
+
+    async def set_emergency_stop(self, *, engaged: bool, reason: str) -> PaperAccount:
+        """Block or unblock new entries.
+
+        Takes the write lock so the halt cannot be observed half-applied by a
+        submission that is already past its own check.
+        """
+        async with self._write_lock:
+            return self._engine.set_emergency_stop(engaged=engaged, reason=reason, now=utcnow())
 
     # ------------------------------------------------------------------
     # Leverage

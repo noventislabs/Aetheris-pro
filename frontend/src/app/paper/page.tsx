@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { AutonomyPanel } from "@/components/AutonomyPanel";
 import { ErrorState, LoadingState } from "@/components/DataState";
 import { SymbolSearch } from "@/components/SymbolSearch";
 import {
@@ -741,6 +742,8 @@ export default function PaperPage() {
           </div>
         ) : null}
       </section>
+
+      <AutonomyPanel />
 
       <section className="panel">
         <div className="panel-head">

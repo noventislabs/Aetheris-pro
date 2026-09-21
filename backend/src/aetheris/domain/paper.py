@@ -119,6 +119,13 @@ class PaperOrder(BaseModel):
     #: one, so a caller can tell a retry from a new submission.
     idempotent_replay: bool = False
 
+    #: What the phase 7 risk engine said about this order before the paper gate
+    #: saw it, when something ran one. None for a directly submitted order,
+    #: which passed only the paper gate. Recorded so an autonomous fill can be
+    #: traced back to the authority that approved it, rather than the link
+    #: living solely in a separate decision log.
+    risk_verdict_detail: str | None = None
+
     @property
     def is_filled(self) -> bool:
         return self.state is OrderState.FILLED
