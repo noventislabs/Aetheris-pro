@@ -13,8 +13,8 @@ from __future__ import annotations
 
 from decimal import Decimal
 from functools import lru_cache
-from typing import Literal, Self
-from urllib.parse import urlparse
+from typing import Final, Literal, Self
+from urllib.parse import urlparse, urlsplit
 
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -328,6 +328,83 @@ class AutonomousSettings(BaseSettings):
         return seen
 
 
+#: The only host the testnet adapter may talk to. An allowlist of one, checked
+#: at construction, because the failure it prevents is placing a real order on
+#: production while believing it is a simulation. Neither the production host
+#: nor the legacy testnet host is acceptable: a fallback that "still works" is
+#: how a configuration slip becomes real money.
+TESTNET_ALLOWED_HOST: Final = "demo-fapi.binance.com"
+PRODUCTION_HOST: Final = "fapi.binance.com"
+LEGACY_TESTNET_HOST: Final = "testnet.binancefuture.com"
+
+
+class TestnetSettings(BaseSettings):
+    """Binance USDT-M Futures testnet execution.
+
+    Its own namespace on purpose. ``AETHERIS_BINANCE_*`` configures public
+    market data and holds no credentials; anything that can place an order
+    lives here, so a paper deployment cannot reach a key by reading a variable
+    it already reads for something else.
+
+    Every field fails closed. Missing credentials with testnet enabled is a
+    startup error, never a quiet fall back to paper.
+    """
+
+    model_config = SettingsConfigDict(env_prefix="AETHERIS_TESTNET_", extra="ignore")
+
+    rest_base_url: str = Field(default=f"https://{TESTNET_ALLOWED_HOST}")
+    api_key: SecretStr | None = None
+    api_secret: SecretStr | None = None
+
+    #: Milliseconds a signed request stays valid after its timestamp. Binance
+    #: defaults to 5000 when omitted; stated here so the value is visible.
+    recv_window_ms: int = Field(default=5000, ge=1000, le=60000)
+    request_timeout_seconds: float = Field(default=10.0, gt=0, le=60)
+    connect_timeout_seconds: float = Field(default=5.0, gt=0, le=60)
+    #: Submissions are never retried -- a timeout before and after the venue
+    #: received an order are indistinguishable from here. This bounds retries
+    #: of *read* calls only.
+    max_read_retries: int = Field(default=2, ge=0, le=5)
+    backoff_seconds: float = Field(default=0.5, ge=0, le=10)
+    max_backoff_seconds: float = Field(default=8.0, ge=0, le=60)
+
+    #: Reconciliation polling backoff, in seconds, by attempt.
+    reconcile_backoff_seconds: tuple[int, ...] = (5, 15, 60, 300)
+
+    @field_validator("rest_base_url")
+    @classmethod
+    def _only_the_testnet_host(cls, value: str) -> str:
+        """Reject every host but one, by name.
+
+        Stated as an allowlist rather than a denylist: a new production
+        hostname would slip past a denylist, and the direction of that mistake
+        is unrecoverable.
+        """
+        parsed = urlsplit(value)
+        if parsed.scheme != "https":
+            raise ValueError("the testnet base URL must be https")
+        host = parsed.hostname or ""
+        if host == PRODUCTION_HOST:
+            raise ValueError(
+                "the testnet adapter refuses the production host. Testnet execution "
+                "may never reach fapi.binance.com."
+            )
+        if host == LEGACY_TESTNET_HOST:
+            raise ValueError(
+                f"{LEGACY_TESTNET_HOST} is the superseded testnet host and is not "
+                f"allowlisted. Use https://{TESTNET_ALLOWED_HOST}."
+            )
+        if host != TESTNET_ALLOWED_HOST:
+            raise ValueError(f"testnet host {host!r} is not allowlisted")
+        if parsed.path.rstrip("/"):
+            raise ValueError("the testnet base URL must have no path")
+        return value.rstrip("/")
+
+    @property
+    def credentials_present(self) -> bool:
+        return self.api_key is not None and self.api_secret is not None
+
+
 class Settings(BaseSettings):
     """Top-level application settings."""
 
@@ -399,6 +476,7 @@ class Settings(BaseSettings):
     backtest: BacktestSettings = Field(default_factory=BacktestSettings)
     paper: PaperTradingSettings = Field(default_factory=PaperTradingSettings)
     autonomous: AutonomousSettings = Field(default_factory=AutonomousSettings)
+    testnet: TestnetSettings = Field(default_factory=TestnetSettings)
 
     @model_validator(mode="after")
     def _live_requires_two_switches(self) -> Self:
@@ -412,6 +490,27 @@ class Settings(BaseSettings):
             raise ValueError(
                 "live_trading_enabled requires live_activation_acknowledged=true; "
                 "live trading cannot be enabled by a single flag"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _testnet_execution_requires_credentials(self) -> Self:
+        """Enabled-but-unconfigured is a startup error, not a silent downgrade.
+
+        The tempting alternative -- start anyway and fall back to paper -- is
+        the exact shape of failure this project keeps refusing: the system
+        would look like it was trading testnet while it was simulating, and
+        nothing in the response would say otherwise.
+        """
+        if self.testnet_trading_enabled and not self.testnet.credentials_present:
+            missing = [
+                name
+                for name in ("AETHERIS_TESTNET_API_KEY", "AETHERIS_TESTNET_API_SECRET")
+                if getattr(self.testnet, name.removeprefix("AETHERIS_TESTNET_").lower()) is None
+            ]
+            raise ValueError(
+                f"testnet trading is enabled but {', '.join(missing)} is not set. "
+                "Testnet execution does not fall back to paper."
             )
         return self
 

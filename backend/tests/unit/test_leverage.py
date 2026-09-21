@@ -329,17 +329,37 @@ def test_strategy_results_never_approve_leverage_in_this_build() -> None:
     }
 
 
-def test_no_leverage_setting_endpoint_exists() -> None:
-    """Rule 9: no leverage or order API in phase 4."""
+def test_leverage_is_set_in_exactly_two_modules_and_only_after_approval() -> None:
+    """Rule 9, narrowed rather than dropped.
+
+    "No leverage API exists" was right while nothing executed. Phase 8b has to
+    set leverage at a venue -- risk approval is binding, not advisory, so the
+    venue must be made to agree before an order is placed. What replaces the
+    ban is confinement: the path constants live in the testnet endpoint map,
+    the call lives in the adapter, and the service is the only caller. Anything
+    else naming them would be leverage being set outside the approved chain.
+    """
     import pathlib
 
     import aetheris
 
     root = pathlib.Path(aetheris.__file__).parent
+    may_name_paths = {"adapters/exchange/binance/testnet_endpoints.py"}
+    may_set = {
+        "adapters/exchange/binance/testnet_adapter.py",
+        "adapters/exchange/ports.py",
+        "services/testnet.py",
+    }
     for path in root.rglob("*.py"):
+        relative = path.relative_to(root).as_posix()
         source = path.read_text(encoding="utf-8")
-        for forbidden in ("/fapi/v1/leverage", "/fapi/v1/marginType", "set_leverage"):
-            assert forbidden not in source, f"{path.name} references {forbidden}"
+        for forbidden in ("/fapi/v1/leverage", "/fapi/v1/marginType"):
+            assert forbidden not in source or relative in may_name_paths, (
+                f"{relative} references {forbidden}"
+            )
+        assert "set_leverage" not in source or relative in may_set, (
+            f"{relative} sets leverage outside the approved chain"
+        )
 
 
 # ----------------------------------------------------------------------

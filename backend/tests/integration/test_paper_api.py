@@ -184,12 +184,13 @@ def test_capabilities_report_paper_as_built_and_execution_as_not(client: TestCli
     # reaches a venue, and real execution is still unclaimed.
     assert by_key["paper.autonomous"]["status"] == "AVAILABLE"
     assert by_key["risk.engine"]["status"] == "AVAILABLE"
-    assert by_key["execution.testnet"]["status"] == "PLANNED"
+    # PARTIAL since phase 8b: signed testnet execution exists. Still not
+    # AVAILABLE, and execution.live is still PLANNED and unimplemented.
+    assert by_key["execution.testnet"]["status"] == "PARTIAL"
     assert by_key["execution.live"]["status"] == "PLANNED"
     # PARTIAL since phase 8a: records are durable in PostgreSQL and a recovery
-    # pass runs at startup. Still not AVAILABLE -- nothing submits anywhere.
+    # pass runs at startup.
     assert by_key["order.persistence"]["status"] == "PARTIAL"
-    assert by_key["execution.testnet"]["status"] == "PLANNED"
 
 
 # ----------------------------------------------------------------------

@@ -13,6 +13,7 @@ from aetheris.services.backtest import BacktestService
 from aetheris.services.market_data import MarketDataService
 from aetheris.services.paper import PaperTradingService
 from aetheris.services.scanner import ScannerService
+from aetheris.services.testnet import TestnetExecutionService
 
 
 def get_market_data_service(request: Request) -> MarketDataService:
@@ -93,3 +94,23 @@ def get_autonomous_loop(request: Request) -> AutonomousLoop:
 
 
 AutonomousDep = Annotated[AutonomousLoop, Depends(get_autonomous_loop)]
+
+
+def get_testnet_service(request: Request) -> TestnetExecutionService:
+    """Resolve the process-wide testnet execution service.
+
+    Absent means testnet execution is not configured, and that is reported as
+    unavailable rather than quietly served by something else. There is no
+    fallback to paper here: a caller that asked to trade the testnet and was
+    silently simulated would have no way to tell.
+    """
+    service = getattr(request.app.state, "testnet_service", None)
+    if not isinstance(service, TestnetExecutionService):
+        raise UpstreamUnavailableError(
+            "Testnet execution is not configured. It requires testnet credentials "
+            "and a reachable database, and does not fall back to paper."
+        )
+    return service
+
+
+TestnetDep = Annotated[TestnetExecutionService, Depends(get_testnet_service)]

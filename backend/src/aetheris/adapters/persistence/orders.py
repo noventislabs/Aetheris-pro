@@ -47,6 +47,7 @@ from aetheris.domain.order import (
     OrderOrigin,
     OrderRecord,
 )
+from aetheris.domain.venue import MarginMode
 from aetheris.engines.order.store import (
     DuplicateClientOrderIdError,
     OpenOrderScan,
@@ -533,6 +534,12 @@ class PostgresOrderRepository(OrderRepository):
             "reconciliation_attempts": record.reconciliation_attempts,
             "last_reconciled_at": record.last_reconciled_at,
             "reconciliation_detail": record.reconciliation_detail,
+            "venue_status_raw": record.venue_status_raw,
+            "last_polled_at": record.last_polled_at,
+            "venue_leverage": record.venue_leverage,
+            "venue_margin_mode": (
+                record.venue_margin_mode.value if record.venue_margin_mode else None
+            ),
             "resolved_by_operator": record.resolved_by_operator,
             "operator_reason": record.operator_reason,
         }
@@ -601,6 +608,12 @@ class PostgresOrderRepository(OrderRepository):
             reconciliation_attempts=row.reconciliation_attempts,
             last_reconciled_at=_utc_or_none(row.last_reconciled_at),
             reconciliation_detail=row.reconciliation_detail,
+            venue_status_raw=row.venue_status_raw,
+            last_polled_at=_utc_or_none(row.last_polled_at),
+            venue_leverage=row.venue_leverage,
+            venue_margin_mode=(
+                MarginMode(row.venue_margin_mode) if row.venue_margin_mode else None
+            ),
             discrepancies=tuple(
                 OrderDiscrepancy(
                     observed_at=_utc(d.observed_at),

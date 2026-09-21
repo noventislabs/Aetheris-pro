@@ -326,9 +326,22 @@ CAPABILITIES: tuple[Capability, ...] = (
     Capability(
         key="execution.testnet",
         name="Testnet execution",
-        status=CapabilityStatus.PLANNED,
+        status=CapabilityStatus.PARTIAL,
         phase=8,
-        detail="Isolated credentials and order records. Not started.",
+        detail=(
+            "Phase 8b: signed HMAC-SHA256 execution against the Binance USDT-M futures "
+            "TESTNET only, at demo-fapi.binance.com, which is the single allowlisted "
+            "host -- the production and superseded testnet hosts are refused by "
+            "construction. One-way position mode only; a hedge-mode account is refused "
+            "rather than adapted to. Every order is written down before it is sent, "
+            "ruled on by the same risk engine the paper path uses, and submitted only "
+            "after the venue CONFIRMS the approved leverage and ISOLATED margin -- a "
+            "mismatch refuses. An unknown exchange ceiling refuses. Orders that vanish "
+            "wholesale from the venue are treated as a reset condition needing human "
+            "review, never converted into a guessed terminal state. PARTIAL: no "
+            "autonomous testnet trading, no websocket fills, and completion requires an "
+            "opt-in run against real testnet credentials."
+        ),
     ),
     Capability(
         key="ai.analysis",

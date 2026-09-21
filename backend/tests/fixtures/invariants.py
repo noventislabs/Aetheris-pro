@@ -29,7 +29,10 @@ from __future__ import annotations
 from fastapi.testclient import TestClient
 
 #: The only prefix under which a state-changing route may live.
-WRITE_NAMESPACE = "/api/v1/paper/"
+#: The namespaces a state-changing route may live under. Paper mutates a
+#: simulation; testnet reaches a venue. Both are named explicitly so a
+#: write appearing anywhere else is a failure rather than a surprise.
+WRITE_NAMESPACES = ("/api/v1/paper/", "/api/v1/testnet/")
 
 #: Verbs the system exposes at all.
 ALLOWED_METHODS = {"get", "post"}
@@ -51,13 +54,13 @@ def assert_route_surface(client: TestClient) -> None:
             "PUT, PATCH or DELETE route anywhere"
         )
         if "post" in methods:
-            assert path.startswith(WRITE_NAMESPACE), (
-                f"{path} is a write outside the paper namespace. State-changing routes "
-                f"exist only under {WRITE_NAMESPACE}, against simulation state."
+            assert path.startswith(WRITE_NAMESPACES), (
+                f"{path} is a write outside the permitted namespaces. State-changing "
+                f"routes exist only under {' or '.join(WRITE_NAMESPACES)}."
             )
         for token in FORBIDDEN_PATH_TOKENS:
             assert token not in path.lower(), f"{path} names a {token} surface"
         if "order" in path.lower():
-            assert path.startswith(WRITE_NAMESPACE), (
-                f"{path} names an order surface outside paper simulation"
+            assert path.startswith(WRITE_NAMESPACES), (
+                f"{path} names an order surface outside the paper and testnet namespaces"
             )

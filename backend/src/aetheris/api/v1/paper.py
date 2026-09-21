@@ -19,9 +19,15 @@ in ``tests/unit/test_architecture.py``:
 2. **Writes exist only under ``/paper``**, and every one of them acts on
    in-memory simulation state.
 
-What these routes cannot do is worth stating plainly: there is no live order
-placement, no testnet order placement, no API-key trading, no withdrawal
-endpoint, and no path that turns any of them on.
+What these routes cannot do is worth stating plainly: they place no order
+anywhere. Every one of them acts on in-memory simulation state and reaches no
+venue, holds no credential, and cannot be made to.
+
+Phase 8b added a **separate** namespace, ``/testnet``, which does reach a venue
+-- the Binance futures testnet, and only that. It is a different router, a
+different service and a different adapter; nothing here can reach it, and no
+flag promotes a paper order into one. Live order placement still does not
+exist, and no path turns it on.
 """
 
 from __future__ import annotations

@@ -16,6 +16,10 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from aetheris import __version__
 from aetheris.adapters.exchange.binance.adapter import BinanceFuturesMarketDataAdapter
+from aetheris.adapters.exchange.binance.testnet_adapter import (
+    BinanceTestnetTradingAdapter,
+)
+from aetheris.adapters.exchange.errors import ExchangeError
 from aetheris.adapters.persistence.accounts import PostgresAccountRepository
 from aetheris.adapters.persistence.engine import (
     DatabaseUnavailableError,
@@ -40,6 +44,7 @@ from aetheris.services.backtest import BacktestService
 from aetheris.services.market_data import MarketDataService
 from aetheris.services.paper import PaperTradingService
 from aetheris.services.scanner import ScannerService
+from aetheris.services.testnet import TestnetExecutionService
 
 _log = get_logger("app")
 
@@ -127,6 +132,68 @@ async def _open_order_store(app: FastAPI, settings: Settings) -> None:
     )
 
 
+async def _open_testnet_execution(app: FastAPI, settings: Settings) -> None:
+    """Attach testnet execution, or attach nothing and say why.
+
+    Four preconditions, every one of them a refusal rather than a fallback:
+
+    - the mode must be enabled,
+    - credentials must be present (the settings validator already refuses the
+      other combination at startup),
+    - durable order storage must exist, because an order must be written down
+      before it can be sent, and
+    - the venue must be in one-way position mode.
+
+    Missing any of them leaves ``testnet_service`` unset, and the dependency
+    reports the route as unavailable. It never falls back to paper: a caller
+    who asked to trade the testnet and was silently simulated would have no way
+    to tell the difference.
+    """
+    app.state.testnet_service = None
+    app.state.testnet_adapter = None
+
+    if not settings.is_mode_enabled(TradingMode.TESTNET):
+        _log.info("testnet_execution_disabled", reason="mode not enabled")
+        return
+    if app.state.order_engine is None:
+        _log.warning(
+            "testnet_execution_unavailable",
+            reason="no durable order store; an order must be recorded before it is sent",
+        )
+        return
+
+    try:
+        adapter = BinanceTestnetTradingAdapter(settings.testnet)
+        await adapter.sync_clock()
+        await adapter.require_one_way_mode()
+        account = await adapter.account_identity()
+    except ExchangeError as exc:
+        # The message names the failure class, never the host or the key.
+        _log.warning("testnet_execution_unavailable", reason=type(exc).__name__)
+        return
+
+    if not account.can_trade:
+        _log.warning("testnet_execution_unavailable", reason="venue reports trading disabled")
+        await adapter.aclose()
+        return
+
+    app.state.testnet_adapter = adapter
+    app.state.testnet_service = TestnetExecutionService(
+        adapter,
+        app.state.order_engine,
+        app.state.market_data_service,
+        settings,
+        account_id=str(app.state.order_account_id),
+        session_start=utcnow(),
+    )
+    _log.info(
+        "testnet_execution_ready",
+        venue=adapter.venue_name,
+        position_mode=account.position_mode.value,
+        can_trade=account.can_trade,
+    )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings: Settings = app.state.settings
@@ -146,6 +213,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
     # Creating the task is not arming it. The loop idles until somebody calls
     # the arm endpoint, and starts disarmed on every boot however it was left.
+    await _open_testnet_execution(app, settings)
     loop.start()
     try:
         yield
@@ -154,6 +222,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # must stop before the connection pool it uses is closed underneath it.
         await loop.aclose()
         await app.state.market_data_service.aclose()
+        if app.state.testnet_adapter is not None:
+            await app.state.testnet_adapter.aclose()
         if app.state.db_engine is not None:
             await app.state.db_engine.dispose()
         _log.info("shutdown")

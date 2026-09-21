@@ -257,20 +257,28 @@ def test_capabilities_now_report_market_data_as_available(
     # PARTIAL since phase 8a: records are durable in PostgreSQL and a recovery
     # pass runs at startup. Still not AVAILABLE -- nothing submits anywhere.
     assert by_key["order.persistence"]["status"] == "PARTIAL"
-    assert by_key["execution.testnet"]["status"] == "PLANNED"
+    # PARTIAL since phase 8b: signed testnet execution exists. Still not
+    # AVAILABLE, and execution.live is still PLANNED and unimplemented.
+    assert by_key["execution.testnet"]["status"] == "PARTIAL"
+    assert by_key["execution.live"]["status"] == "PLANNED"
     assert by_key["execution.live"]["status"] == "PLANNED"
 
 
 def test_no_venue_order_route_exists(market_client: TestClient) -> None:
     """The read-only guarantee, asserted at the HTTP surface.
 
-    Phase 6 added writes, so the assertion narrowed rather than disappearing:
-    a state-changing route may exist only under the paper namespace, and the
-    only path naming an order is the simulated one.
+    Narrowed twice now. Phase 6 added writes under /paper; phase 8b added
+    /testnet, which does reach a venue. The list is exhaustive and spelled out,
+    so a third order surface appearing anywhere is a failure rather than a
+    surprise -- and the market-data routes still name none.
     """
     assert_route_surface(market_client)
     paths = market_client.get("/openapi.json").json()["paths"]
-    assert [p for p in paths if "order" in p] == ["/api/v1/paper/orders"]
+    assert sorted(p for p in paths if "order" in p) == [
+        "/api/v1/paper/orders",
+        "/api/v1/testnet/orders",
+        "/api/v1/testnet/orders/{order_id}/cancel",
+    ]
 
 
 def test_forming_candle_reports_a_negative_age(market_client: TestClient) -> None:

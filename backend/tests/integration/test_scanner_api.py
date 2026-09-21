@@ -272,7 +272,10 @@ def test_capabilities_report_the_scanner_as_available(client: TestClient) -> Non
     # PARTIAL since phase 8a: records are durable in PostgreSQL and a recovery
     # pass runs at startup. Still not AVAILABLE -- nothing submits anywhere.
     assert by_key["order.persistence"]["status"] == "PARTIAL"
-    assert by_key["execution.testnet"]["status"] == "PLANNED"
+    # PARTIAL since phase 8b: signed testnet execution exists. Still not
+    # AVAILABLE, and execution.live is still PLANNED and unimplemented.
+    assert by_key["execution.testnet"]["status"] == "PARTIAL"
+    assert by_key["execution.live"]["status"] == "PLANNED"
 
 
 def test_scanner_exposes_no_write_route(client: TestClient) -> None:

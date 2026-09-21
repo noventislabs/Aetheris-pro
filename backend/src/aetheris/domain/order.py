@@ -31,6 +31,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from aetheris.core.errors import RiskRejectionCode
 from aetheris.domain.enums import OrderSide, OrderState, OrderType, TradingMode
+from aetheris.domain.venue import MarginMode
 
 
 class OrderOrigin(StrEnum):
@@ -148,6 +149,21 @@ class OrderRecord(BaseModel):
     #: How many times reconciliation has asked about this order, and what it
     #: last learned. A count that keeps rising with no resolution is itself a
     #: signal worth surfacing.
+    #: Exactly what the venue called this order's status, before mapping.
+    #: EXPIRED_IN_MATCH becomes EXPIRED in the machine by decision, and this is
+    #: where the distinction survives -- a state machine that branched on venue
+    #: vocabulary would have the venue's vocabulary in it forever.
+    venue_status_raw: str | None = None
+    #: When the venue was last asked. Distinct from ``last_reconciled_at``,
+    #: which records when a *decision* was applied: asking and learning nothing
+    #: is still asking, and a rising poll count with no change is worth seeing.
+    last_polled_at: datetime | None = None
+    #: The leverage and margin mode the venue **confirmed** were in force
+    #: before this order was allowed to leave. Recorded rather than assumed so
+    #: a fill can be audited against what actually applied.
+    venue_leverage: Decimal | None = Field(default=None, gt=0)
+    venue_margin_mode: MarginMode | None = None
+
     reconciliation_attempts: int = Field(default=0, ge=0)
     last_reconciled_at: datetime | None = None
     reconciliation_detail: str | None = None

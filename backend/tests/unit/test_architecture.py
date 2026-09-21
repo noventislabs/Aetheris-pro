@@ -127,14 +127,39 @@ def test_adapter_has_no_execution_methods(method: str) -> None:
     assert not hasattr(BinanceFuturesMarketDataAdapter, method)
 
 
-def test_no_order_endpoints_are_referenced_anywhere() -> None:
-    """Phase 2 must not even name a Binance order path."""
-    order_paths = ("/fapi/v1/order", "/fapi/v1/batchOrders", "/fapi/v2/account")
+#: The one module allowed to name a venue order path. Phase 8b narrowed a
+#: package-wide ban to a single file rather than deleting it: "no order path
+#: anywhere" was the right rule while nothing executed, and "order paths live
+#: in exactly one place" is the strongest rule still available once something
+#: does. A path appearing anywhere else is the regression worth catching.
+VENUE_PATH_MODULE = "adapters/exchange/binance/testnet_endpoints.py"
+
+
+def test_venue_order_paths_appear_in_exactly_one_module() -> None:
+    """A Binance order path may be named in the testnet endpoint map, nowhere else.
+
+    Confinement, not absence. Every other module -- the paper engine, the risk
+    engine, the market-data adapter, every route -- must still be incapable of
+    naming an order endpoint, which is what keeps the execution surface a
+    single reviewable file.
+    """
+    order_paths = (
+        "/fapi/v1/order",
+        "/fapi/v1/batchOrders",
+        "/fapi/v1/leverage",
+        "/fapi/v1/marginType",
+        "/fapi/v1/leverageBracket",
+        "/fapi/v3/account",
+    )
     for path in PACKAGE_ROOT.rglob("*.py"):
+        relative = path.relative_to(PACKAGE_ROOT).as_posix()
+        if relative == VENUE_PATH_MODULE:
+            continue
         source = path.read_text(encoding="utf-8")
         for order_path in order_paths:
             assert order_path not in source, (
-                f"{path.relative_to(PACKAGE_ROOT)} references {order_path}"
+                f"{relative} references {order_path}; venue order paths belong only "
+                f"in {VENUE_PATH_MODULE}"
             )
 
 
@@ -269,10 +294,27 @@ def test_paper_engine_names_no_credential_or_withdrawal_concept(token: str) -> N
         assert token.lower() not in source, f"{path.relative_to(PACKAGE_ROOT)} names {token}"
 
 
-def test_no_testnet_or_live_execution_path_exists() -> None:
-    """Phase 6 is paper only. Nothing may reference a venue trading host."""
-    banned = ("testnet.binance", "testnet.binancefuture", "fapi.binance.com/fapi/v1/order")
+def test_no_live_execution_path_exists() -> None:
+    """Live execution must be unreachable, and the legacy testnet host unused.
+
+    The production host may still be named -- it is the public market-data base
+    URL -- but never together with an order path, and the superseded testnet
+    host may not appear at all: a fallback that "still works" is how a
+    configuration slip becomes real money.
+    """
+    banned = (
+        "testnet.binancefuture",
+        "fapi.binance.com/fapi/v1/order",
+    )
+    # The composition surface is exempt, as it is for the venue-name test, and
+    # for a sharper reason here: config.py names the superseded host and the
+    # production host precisely in order to **refuse** them. Honest code has to
+    # mention a thing to deny it, so the denial is asserted separately below
+    # rather than the mention being banned.
+    exempt = {PACKAGE_ROOT / "core" / "config.py"}
     for path in PACKAGE_ROOT.rglob("*.py"):
+        if path in exempt:
+            continue
         source = path.read_text(encoding="utf-8").lower()
         for token in banned:
             assert token not in source, f"{path.relative_to(PACKAGE_ROOT)} references {token}"
@@ -292,14 +334,17 @@ def test_only_the_paper_router_declares_a_write_route() -> None:
             for verb in ("router.post", "router.put", "router.patch", "router.delete")
             if verb in source
         ]
-        if path.name == "paper.py":
+        if path.name in ("paper.py", "testnet.py"):
             assert writes == ["router.post"], (
-                "the paper router may declare POST routes and no other verb"
+                f"{path.name} may declare POST routes and no other verb. Cancellation "
+                "is a POST to a sub-path: the venue's own cancel is an HTTP DELETE, "
+                "but that is the adapter's business and does not belong in this API's "
+                "verb surface."
             )
             continue
         assert not writes, (
             f"{path.relative_to(PACKAGE_ROOT)} declares {writes}; state-changing "
-            "routes exist only under the paper namespace"
+            "routes exist only under the paper and testnet namespaces"
         )
 
 
@@ -524,25 +569,58 @@ def test_the_order_engine_names_no_credential_or_withdrawal_concept() -> None:
             assert token not in source, f"{path.relative_to(PACKAGE_ROOT)} names {token}"
 
 
-def test_phase_8a_introduces_no_venue_execution_path() -> None:
-    """8a builds the lifecycle. 8c gives it somewhere to submit.
+def test_the_only_execution_adapter_is_the_testnet_one() -> None:
+    """8b gives the lifecycle somewhere to submit -- exactly one somewhere.
 
-    Until then nothing implements TradingPort, and no venue trading host or
-    order path appears anywhere in the package.
+    The statement 8a could make, that nothing executes at all, is no longer
+    true. What replaces it is narrower and still worth asserting: the testnet
+    adapter reports TESTNET, the market-data adapter still satisfies nothing,
+    and no object anywhere claims to execute against LIVE.
     """
-    assert not TradingPort.__subclasses__()
-    banned = (
-        "/fapi/v1/order",
-        "/fapi/v1/batchOrders",
-        "/fapi/v2/account",
-        "/fapi/v1/leverageBracket",
-        "testnet.binance",
-        "testnet.binancefuture",
+    from aetheris.adapters.exchange.binance.testnet_adapter import (
+        BinanceTestnetTradingAdapter,
     )
+    from aetheris.domain.enums import TradingMode
+
+    adapter = BinanceTestnetTradingAdapter.__new__(BinanceTestnetTradingAdapter)
+    assert adapter.venue_mode is TradingMode.TESTNET
+
+    market_data = BinanceFuturesMarketDataAdapter.__new__(BinanceFuturesMarketDataAdapter)
+    assert not isinstance(market_data, TradingPort)
+
+    # No execution module may name the live mode at all. config.py and
+    # enums.py name it because a mode has to exist to be switched off, and
+    # capabilities.py must report on it; none of them can execute.
+    exempt_names = {"config.py", "enums.py", "capabilities.py", "models.py"}
     for path in PACKAGE_ROOT.rglob("*.py"):
-        source = path.read_text(encoding="utf-8").lower()
-        for token in banned:
-            assert token not in source, f"{path.relative_to(PACKAGE_ROOT)} references {token}"
+        if path.name in exempt_names:
+            continue
+        source = path.read_text(encoding="utf-8")
+        assert "TradingMode.LIVE" not in source, (
+            f"{path.relative_to(PACKAGE_ROOT)} names TradingMode.LIVE; live "
+            "execution is not implemented and nothing may reference its mode"
+        )
+
+
+def test_the_superseded_and_production_hosts_are_named_only_to_refuse_them() -> None:
+    """The exemption above is paid for here.
+
+    config.py may mention both hosts, and must do so only inside a rejection.
+    Asserting the refusal exists is stronger than asserting the string does
+    not: a file that had quietly started *using* one of them would pass a
+    substring ban by simply not spelling it the same way.
+    """
+    from aetheris.core.config import (
+        LEGACY_TESTNET_HOST,
+        PRODUCTION_HOST,
+        TESTNET_ALLOWED_HOST,
+        TestnetSettings,
+    )
+
+    assert TESTNET_ALLOWED_HOST == "demo-fapi.binance.com"
+    for refused in (PRODUCTION_HOST, LEGACY_TESTNET_HOST):
+        with pytest.raises(ValueError):
+            TestnetSettings(_env_file=None, rest_base_url=f"https://{refused}")  # type: ignore[call-arg]
 
 
 def test_unknown_cannot_reach_a_resolved_state_without_reconciling() -> None:

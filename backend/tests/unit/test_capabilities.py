@@ -32,7 +32,6 @@ def test_real_execution_capabilities_are_not_claimed_in_this_build() -> None:
     reaches a venue is not.
     """
     for key in (
-        "execution.testnet",
         "execution.live",
         "falcon.command_center",
         "portfolio.engine",
@@ -42,6 +41,26 @@ def test_real_execution_capabilities_are_not_claimed_in_this_build() -> None:
         assert capability.status is CapabilityStatus.PLANNED, (
             f"{key} claims {capability.status} but no engine is implemented"
         )
+
+
+def test_testnet_execution_is_partial_and_does_not_imply_live() -> None:
+    """``execution.testnet`` left the list above when phase 8b built it.
+
+    It is the one capability in this build that can move a position, so it gets
+    its own boundary rather than sharing the blanket "nothing executes" claim.
+    What must stay true: it is not AVAILABLE, it names the testnet host, it
+    disclaims autonomous trading, and live remains untouched and PLANNED.
+    """
+    testnet = get_capability("execution.testnet")
+    assert testnet is not None
+    assert testnet.status is CapabilityStatus.PARTIAL
+    assert "TESTNET only" in testnet.detail
+    assert "demo-fapi.binance.com" in testnet.detail
+    assert "no autonomous testnet trading" in testnet.detail
+
+    live = get_capability("execution.live")
+    assert live is not None
+    assert live.status is CapabilityStatus.PLANNED
 
 
 def test_durable_order_records_are_storage_and_do_not_imply_execution() -> None:

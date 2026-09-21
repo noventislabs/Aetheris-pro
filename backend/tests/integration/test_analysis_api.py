@@ -368,6 +368,7 @@ def test_capabilities_report_indicators_and_strategy_as_available(
     assert by_key["backtest.engine"]["status"] == "AVAILABLE"
     # Paper trading shipped in phase 6; real execution still has not.
     assert by_key["paper.engine"]["status"] == "AVAILABLE"
-    assert by_key["execution.testnet"]["status"] == "PLANNED"
+    # PARTIAL since phase 8b. Live is the one that must stay PLANNED.
+    assert by_key["execution.testnet"]["status"] == "PARTIAL"
     assert by_key["ai.analysis"]["status"] == "PLANNED"
     assert by_key["execution.live"]["status"] == "PLANNED"

@@ -159,7 +159,11 @@ def test_capabilities_report_the_loop_and_the_authority(client: TestClient) -> N
     assert by_key["risk.engine"]["status"] == "AVAILABLE"
     # Building the authority did not unlock leverage, and must not claim to.
     assert "above 1x still fails closed" in by_key["risk.engine"]["detail"]
-    assert by_key["execution.testnet"]["status"] == "PLANNED"
+    # Phase 8b gave the testnet an execution path. The loop did not get one:
+    # autonomous trading remains PAPER ONLY, which is the assertion that
+    # matters on this endpoint.
+    assert by_key["execution.testnet"]["status"] == "PARTIAL"
+    assert "no autonomous testnet trading" in by_key["execution.testnet"]["detail"]
     assert by_key["execution.live"]["status"] == "PLANNED"
 
 

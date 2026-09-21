@@ -106,6 +106,12 @@ class AccountRow(Base):
     )
     mode: Mapped[str] = mapped_column(String(16), nullable=False)
     starting_balance: Mapped[Decimal] = mapped_column(MONEY, nullable=False)
+    #: Who we are at the venue, so records cannot be silently re-attributed to
+    #: a different venue account after a key swap.
+    venue_account_id: Mapped[str | None] = mapped_column(String(64))
+    #: A **name** that resolves to an environment variable, never a secret. A
+    #: CHECK constraint confines it to a shape no key could occupy.
+    credential_ref: Mapped[str | None] = mapped_column(String(40))
     created_at: Mapped[dt.datetime] = mapped_column(
         _TS, nullable=False, server_default=text("now()")
     )
@@ -128,6 +134,10 @@ class OrderRow(Base):
         # because a recovery pass and a live request can check-then-insert
         # concurrently, and a dictionary cannot serialise across processes.
         UniqueConstraint("account_id", "client_order_id", name="uq_orders_account_client_id"),
+        # One venue order belongs to at most one local record. Indexed before,
+        # constrained now: two local rows claiming one venue order is exactly
+        # the confusion reconciliation is supposed to resolve, not create.
+        UniqueConstraint("account_id", "venue_order_id", name="uq_orders_account_venue_order_id"),
         Index("ix_orders_account_state", "account_id", "state"),
         # For a future push stream keyed by the venue's identifier, not ours.
         Index("ix_orders_venue_order_id", "venue_order_id"),
@@ -173,6 +183,18 @@ class OrderRow(Base):
     rejection_detail: Mapped[str | None] = mapped_column(Text)
     venue_rejection: Mapped[str | None] = mapped_column(Text)
 
+    #: Exactly what the venue said, before mapping. EXPIRED_IN_MATCH becomes
+    #: EXPIRED in the domain by decision; this is where that distinction
+    #: survives for whoever reads the history later.
+    venue_status_raw: Mapped[str | None] = mapped_column(String(32))
+    #: Distinguishes "asked, nothing had changed" from "never asked".
+    last_polled_at: Mapped[dt.datetime | None] = mapped_column(_TS)
+    #: The execution parameters the venue **confirmed** before the order was
+    #: allowed to leave. Recorded so a fill can be audited against what was
+    #: actually in force, not what was requested.
+    venue_leverage: Mapped[Decimal | None] = mapped_column(MONEY)
+    venue_margin_mode: Mapped[str | None] = mapped_column(String(16))
+
     reconciliation_attempts: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default=text("0")
     )
@@ -207,6 +229,10 @@ class OrderFillRow(Base):
         UniqueConstraint("order_id", "venue_trade_id", name="uq_order_fills_venue_trade"),
         UniqueConstraint("order_id", "fill_id", name="uq_order_fills_fill_id"),
         Index("ix_order_fills_order", "order_id"),
+        # PostgreSQL does not index the referencing side of a foreign key, so
+        # every cascade from `users` would scan this table. Free while it is
+        # empty; not free later, which is why it is added now.
+        Index("ix_order_fills_owner", "owner_id"),
     )
 
     id: Mapped[uuid.UUID] = _uuid_pk()
@@ -228,7 +254,11 @@ class OrderDiscrepancyRow(Base):
     """Evidence. Append-only: nothing updates or deletes a row here."""
 
     __tablename__ = "order_discrepancies"
-    __table_args__ = (Index("ix_order_discrepancies_order", "order_id"),)
+    __table_args__ = (
+        Index("ix_order_discrepancies_order", "order_id"),
+        # Same reasoning as order_fills: the cascade from `users` needs it.
+        Index("ix_order_discrepancies_owner", "owner_id"),
+    )
 
     id: Mapped[uuid.UUID] = _uuid_pk()
     owner_id: Mapped[uuid.UUID] = mapped_column(
