@@ -21,11 +21,37 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from aetheris.domain.enums import Timeframe, TradingMode
 
+#: The one dotenv file every settings model reads, named once so the nested
+#: models and the top-level one cannot drift apart. Relative to the working
+#: directory, exactly as before: resolution is unchanged, only its reach is.
+ENV_FILE = ".env"
+
+
+def _settings_config(prefix: str) -> SettingsConfigDict:
+    """Config for a nested settings model.
+
+    Nested models carried only a prefix, so they read ``os.environ`` and
+    ignored the dotenv file entirely -- while ``.env.example`` documented
+    ``AETHERIS_RISK_*``, ``AETHERIS_TESTNET_*`` and the rest as though setting
+    them there worked. It did not: the file said one thing and the defaults
+    were what ran, silently, including for the risk limits.
+
+    Precedence is unchanged and is pydantic-settings' own: an argument beats a
+    real environment variable, which beats the dotenv file, which beats the
+    default. So anything already supplied by the OS environment keeps winning.
+    """
+    return SettingsConfigDict(
+        env_prefix=prefix,
+        env_file=ENV_FILE,
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
 
 class RiskSettings(BaseSettings):
     """Default risk envelope. Persisted per-account later; these are the seeds."""
 
-    model_config = SettingsConfigDict(env_prefix="AETHERIS_RISK_", extra="ignore")
+    model_config = _settings_config("AETHERIS_RISK_")
 
     paper_starting_balance: Decimal = Field(
         default=Decimal("100"), description="Opening paper balance in USDT"
@@ -86,7 +112,7 @@ class BinanceFuturesSettings(BaseSettings):
     trading credential at all.
     """
 
-    model_config = SettingsConfigDict(env_prefix="AETHERIS_BINANCE_", extra="ignore")
+    model_config = _settings_config("AETHERIS_BINANCE_")
 
     futures_rest_base_url: str = Field(
         default="https://fapi.binance.com",
@@ -138,7 +164,7 @@ class BinanceFuturesSettings(BaseSettings):
 class MarketDataSettings(BaseSettings):
     """Freshness policy for externally sourced market data."""
 
-    model_config = SettingsConfigDict(env_prefix="AETHERIS_MARKET_DATA_", extra="ignore")
+    model_config = _settings_config("AETHERIS_MARKET_DATA_")
 
     max_ticker_age_seconds: float = Field(
         default=30.0,
@@ -162,7 +188,7 @@ class ScannerSettings(BaseSettings):
     out-of-memory error on an 8 GB machine.
     """
 
-    model_config = SettingsConfigDict(env_prefix="AETHERIS_SCANNER_", extra="ignore")
+    model_config = _settings_config("AETHERIS_SCANNER_")
 
     default_page_size: int = Field(default=25, ge=1, le=200)
     max_page_size: int = Field(default=100, ge=1, le=200)
@@ -192,7 +218,7 @@ class AnalysisSettings(BaseSettings):
     here rather than trusted from the caller.
     """
 
-    model_config = SettingsConfigDict(env_prefix="AETHERIS_ANALYSIS_", extra="ignore")
+    model_config = _settings_config("AETHERIS_ANALYSIS_")
 
     default_candle_limit: int = Field(default=300, ge=20, le=1500)
     max_candle_limit: int = Field(default=1000, ge=20, le=1500)
@@ -210,7 +236,7 @@ class BacktestSettings(BaseSettings):
     does not page.
     """
 
-    model_config = SettingsConfigDict(env_prefix="AETHERIS_BACKTEST_", extra="ignore")
+    model_config = _settings_config("AETHERIS_BACKTEST_")
 
     default_candle_limit: int = Field(default=500, ge=60, le=1500)
     max_candle_limit: int = Field(default=1500, ge=60, le=1500)
@@ -224,7 +250,7 @@ class PaperTradingSettings(BaseSettings):
     they guard; a modelled taker fee applies only to a simulated fill.
     """
 
-    model_config = SettingsConfigDict(env_prefix="AETHERIS_PAPER_", extra="ignore")
+    model_config = _settings_config("AETHERIS_PAPER_")
 
     taker_fee_bps: Decimal = Field(
         default=Decimal("5"),
@@ -254,7 +280,7 @@ class AutonomousSettings(BaseSettings):
     system choosing what to trade before anyone asked it to.
     """
 
-    model_config = SettingsConfigDict(env_prefix="AETHERIS_AUTO_", extra="ignore")
+    model_config = _settings_config("AETHERIS_AUTO_")
 
     #: Symbols the loop watches. **Empty by default and deliberately so.**
     #: Nothing is inferred from volume, from a scanner ranking, or from what
@@ -350,7 +376,7 @@ class TestnetSettings(BaseSettings):
     startup error, never a quiet fall back to paper.
     """
 
-    model_config = SettingsConfigDict(env_prefix="AETHERIS_TESTNET_", extra="ignore")
+    model_config = _settings_config("AETHERIS_TESTNET_")
 
     rest_base_url: str = Field(default=f"https://{TESTNET_ALLOWED_HOST}")
     api_key: SecretStr | None = None
@@ -410,7 +436,7 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(
         env_prefix="AETHERIS_",
-        env_file=".env",
+        env_file=ENV_FILE,
         env_file_encoding="utf-8",
         extra="ignore",
     )

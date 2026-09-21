@@ -237,18 +237,41 @@ class BinanceTestnetTradingAdapter:
     # ------------------------------------------------------------------
 
     async def account_identity(self) -> VenueAccount:
+        """Balances from v3, the trading permission from v2.
+
+        Two calls, for a reason worth stating. The current account endpoint
+        carries the balances but does not publish ``canTrade`` at all; only the
+        v2 one does. Reading the missing key with a ``False`` default turned
+        "the venue did not say" into "the venue said no", and refused an
+        account that was perfectly able to trade.
+
+        When v2 cannot be reached the permission is ``None`` -- unknown, not
+        granted. Callers refuse on anything that is not ``True``, so an
+        unreadable permission still fails closed; what it must not do is
+        fabricate a denial and report it as the venue's answer.
+        """
         payload = await self._request(_METHOD_GET, tn.ACCOUNT)
         if not isinstance(payload, dict):
             raise ExchangeInvalidResponseError("account response was not an object")
         mode = await self.position_mode()
         balance = payload.get("availableBalance")
+
+        can_trade: bool | None = None
+        try:
+            legacy = await self._request(_METHOD_GET, tn.ACCOUNT_V2)
+        except ExchangeError:
+            legacy = None
+        if isinstance(legacy, dict) and "canTrade" in legacy:
+            can_trade = bool(legacy["canTrade"])
+
         return VenueAccount(
-            # The testnet account response does not carry a stable numeric id
-            # on every version, so the trade permission flag plus the mode is
-            # what identifies the configuration we are acting under.
-            account_id=str(payload.get("accountAlias") or payload.get("feeTier") or "testnet"),
+            # The account response carries no stable numeric id on this venue,
+            # so the identity recorded is the configuration we act under.
+            account_id=str(
+                payload.get("accountAlias") or (legacy or {}).get("accountAlias") or "testnet"
+            ),
             position_mode=mode,
-            can_trade=bool(payload.get("canTrade", False)),
+            can_trade=can_trade,
             available_balance=Decimal(str(balance)) if balance is not None else None,
         )
 
@@ -352,14 +375,36 @@ class BinanceTestnetTradingAdapter:
     # ------------------------------------------------------------------
 
     async def margin_mode(self, symbol: str) -> MarginMode:
-        payload = await self._request(_METHOD_GET, tn.POSITION_RISK, {"symbol": symbol.upper()})
-        entries = payload if isinstance(payload, list) else [payload]
-        for entry in entries:
-            if isinstance(entry, dict) and str(entry.get("symbol", "")).upper() == symbol.upper():
+        """Read a symbol's margin mode, whether or not a position is open.
+
+        The current position-risk endpoint returns only symbols the account
+        actually has a position in, so on a flat account it returns an empty
+        list -- and an empty list is not a margin mode. That silence arrives
+        moment: the pre-trade check runs before the *first* order on a symbol,
+        which is precisely when there is nothing to report. v2 answers for any
+        symbol, so it is the fallback.
+
+        Still raises when neither version gives an authoritative value. A
+        margin mode that was not read is never assumed, because the caller uses
+        this to decide whether an order may be placed under ISOLATED.
+        """
+        for path in (tn.POSITION_RISK, tn.POSITION_RISK_V2):
+            try:
+                payload = await self._request(_METHOD_GET, path, {"symbol": symbol.upper()})
+            except ExchangeError:
+                continue
+            entries = payload if isinstance(payload, list) else [payload]
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    continue
+                if str(entry.get("symbol", "")).upper() != symbol.upper():
+                    continue
                 raw = str(entry.get("marginType", "")).upper()
                 if raw in ("ISOLATED", "CROSSED", "CROSS"):
                     return MarginMode.ISOLATED if raw == "ISOLATED" else MarginMode.CROSSED
-        raise ExchangeInvalidResponseError(f"venue did not report a margin type for {symbol}")
+        raise ExchangeInvalidResponseError(
+            f"neither positionRisk version reported a margin type for {symbol}; it is not assumed"
+        )
 
     async def set_margin_mode(self, symbol: str, mode: MarginMode) -> None:
         """Request a margin mode, treating "already set" as success.

@@ -37,6 +37,7 @@ from aetheris.core.config import (
     TestnetSettings,
 )
 from aetheris.domain.enums import OrderSide, OrderState
+from aetheris.domain.venue import MarginMode
 from aetheris.engines.order.identity import build_intent_key, client_order_id, is_valid_venue_id
 
 PACKAGE_ROOT = pathlib.Path(aetheris.__file__).parent
@@ -95,9 +96,18 @@ def test_enabling_testnet_without_credentials_fails_closed_at_startup() -> None:
     The alternative -- start anyway and simulate -- would leave the system
     looking like it was trading a venue while it was not, with nothing in any
     response to say so.
+
+    The nested model is built explicitly with no dotenv file. Nested settings
+    read ``.env`` now, so a test that left this to the default would pass or
+    fail according to whether the developer happens to have credentials
+    configured -- which is not a property of the code under test.
     """
     with pytest.raises(ValueError, match="does not fall back to paper"):
-        Settings(_env_file=None, testnet_trading_enabled=True)  # type: ignore[call-arg]
+        Settings(
+            _env_file=None,  # type: ignore[call-arg]
+            testnet_trading_enabled=True,
+            testnet=TestnetSettings(_env_file=None),  # type: ignore[call-arg]
+        )
 
 
 # ----------------------------------------------------------------------
@@ -345,3 +355,166 @@ def test_a_bracket_covers_only_its_own_notional_tier() -> None:
     )
     assert open_ended.covers(Decimal(10_000_000))
     assert not open_ended.covers(Decimal(1_000))
+
+
+# ----------------------------------------------------------------------
+# What the real venue actually returns
+#
+# Both of these were written after the opt-in suite ran against Binance and
+# failed. The payloads below are the shapes demo-fapi.binance.com really sent,
+# not shapes invented to match the code -- which is the whole reason a real
+# run exists alongside the controlled one.
+# ----------------------------------------------------------------------
+
+
+def _venue(handler: object) -> BinanceTestnetTradingAdapter:
+    import httpx
+
+    return BinanceTestnetTradingAdapter(
+        settings(),
+        transport=httpx.MockTransport(handler),  # type: ignore[arg-type]
+    )
+
+
+def _json(payload: object) -> object:
+    import httpx
+
+    return httpx.Response(200, json=payload)
+
+
+async def test_an_absent_can_trade_is_unknown_rather_than_denied() -> None:
+    """v3 dropped the permission flags; v2 still publishes them.
+
+    Reading the missing key with a False default turned "the venue did not
+    say" into "the venue said no" and refused an account that could trade.
+    """
+    import httpx
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path == "/fapi/v3/account":  # exactly what the real venue sends
+            return httpx.Response(200, json={"availableBalance": "7397.57279191"})
+        if path == "/fapi/v2/account":
+            return httpx.Response(200, json={"canTrade": True, "availableBalance": "1"})
+        if path == "/fapi/v1/positionSide/dual":
+            return httpx.Response(200, json={"dualSidePosition": False})
+        return httpx.Response(404, json={"code": -5000, "msg": "unexpected"})
+
+    adapter = _venue(handler)
+    try:
+        account = await adapter.account_identity()
+    finally:
+        await adapter.aclose()
+
+    assert account.can_trade is True
+    assert account.available_balance == Decimal("7397.57279191")
+
+
+async def test_an_unreadable_permission_is_none_and_never_true() -> None:
+    """Unknown must fail closed without being reported as a refusal."""
+    import httpx
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path == "/fapi/v3/account":
+            return httpx.Response(200, json={"availableBalance": "10"})
+        if path == "/fapi/v2/account":
+            return httpx.Response(500, json={"code": -1001, "msg": "internal"})
+        if path == "/fapi/v1/positionSide/dual":
+            return httpx.Response(200, json={"dualSidePosition": False})
+        return httpx.Response(404, json={"code": -5000, "msg": "unexpected"})
+
+    adapter = _venue(handler)
+    try:
+        account = await adapter.account_identity()
+    finally:
+        await adapter.aclose()
+
+    assert account.can_trade is None  # unknown
+    assert account.can_trade is not True  # and therefore never permission
+
+
+async def test_a_denied_permission_is_reported_as_denied() -> None:
+    import httpx
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path == "/fapi/v3/account":
+            return httpx.Response(200, json={"availableBalance": "10"})
+        if path == "/fapi/v2/account":
+            return httpx.Response(200, json={"canTrade": False})
+        if path == "/fapi/v1/positionSide/dual":
+            return httpx.Response(200, json={"dualSidePosition": False})
+        return httpx.Response(404, json={"code": -5000, "msg": "unexpected"})
+
+    adapter = _venue(handler)
+    try:
+        account = await adapter.account_identity()
+    finally:
+        await adapter.aclose()
+    assert account.can_trade is False
+
+
+async def test_margin_mode_falls_back_to_v2_on_a_flat_account() -> None:
+    """v3 returns [] for a symbol with no open position.
+
+    That silence arrives exactly when it hurts: the pre-trade check runs before
+    the *first* order on a symbol, which is when the account is flat.
+    """
+    import httpx
+
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.url.path)
+        if request.url.path == "/fapi/v3/positionRisk":
+            return httpx.Response(200, json=[])  # flat: no rows at all
+        if request.url.path == "/fapi/v2/positionRisk":
+            return httpx.Response(200, json=[{"symbol": "BTCUSDT", "marginType": "isolated"}])
+        return httpx.Response(404, json={"code": -5000, "msg": "unexpected"})
+
+    adapter = _venue(handler)
+    try:
+        mode = await adapter.margin_mode("BTCUSDT")
+    finally:
+        await adapter.aclose()
+
+    assert mode is MarginMode.ISOLATED
+    assert "/fapi/v3/positionRisk" in seen and "/fapi/v2/positionRisk" in seen
+
+
+async def test_margin_mode_uses_v3_when_a_position_is_open() -> None:
+    """The fallback must not become the only path."""
+    import httpx
+
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.url.path)
+        if request.url.path == "/fapi/v3/positionRisk":
+            return httpx.Response(200, json=[{"symbol": "BTCUSDT", "marginType": "CROSSED"}])
+        return httpx.Response(404, json={"code": -5000, "msg": "unexpected"})
+
+    adapter = _venue(handler)
+    try:
+        mode = await adapter.margin_mode("BTCUSDT")
+    finally:
+        await adapter.aclose()
+
+    assert mode is MarginMode.CROSSED
+    assert "/fapi/v2/positionRisk" not in seen
+
+
+async def test_a_margin_mode_nobody_reported_is_not_invented() -> None:
+    """Neither version answered. The value is unknown, so the call raises."""
+    import httpx
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=[])
+
+    adapter = _venue(handler)
+    try:
+        with pytest.raises(ExchangeInvalidResponseError, match="not assumed"):
+            await adapter.margin_mode("BTCUSDT")
+    finally:
+        await adapter.aclose()

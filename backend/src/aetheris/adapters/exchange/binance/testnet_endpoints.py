@@ -52,8 +52,14 @@ MARGIN_TYPE: Final = "/fapi/v1/marginType"
 #: refuses rather than adapts to.
 POSITION_SIDE_DUAL: Final = "/fapi/v1/positionSide/dual"
 
-#: Account state, including per-symbol margin type and leverage.
+#: Account state. v3 is current and carries the balances.
 ACCOUNT: Final = "/fapi/v3/account"
+
+#: The **only** version that publishes ``canTrade``. v3 dropped the permission
+#: flags, and reading an absent key as False turned "the venue did not say"
+#: into "the venue said no" -- which refused a perfectly good account. Kept as
+#: a separate constant so the reason for two account calls is visible.
+ACCOUNT_V2: Final = "/fapi/v2/account"
 
 #: Realised PnL since a point in time. The risk engine's daily loss limit is
 #: evaluated against session realised PnL, and there is no honest way to supply
@@ -63,8 +69,14 @@ ACCOUNT: Final = "/fapi/v3/account"
 INCOME: Final = "/fapi/v1/income"
 INCOME_TYPE_REALIZED_PNL: Final = "REALIZED_PNL"
 
-#: Per-position risk, used to read back the verified margin type.
+#: Per-position risk. v3 returns ONLY symbols with an open position, so on a
+#: flat account it reports nothing at all -- and "no row" is not a margin mode.
 POSITION_RISK: Final = "/fapi/v3/positionRisk"
+
+#: v2 reports a symbol's margin type whether or not a position exists, which is
+#: what a pre-trade check needs: the first order on a symbol is placed when the
+#: account is flat, which is exactly when v3 is silent.
+POSITION_RISK_V2: Final = "/fapi/v2/positionRisk"
 
 #: One-way mode: every order carries this. Hedge mode would require LONG/SHORT
 #: and is out of scope.

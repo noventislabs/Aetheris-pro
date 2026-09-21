@@ -172,8 +172,17 @@ async def _open_testnet_execution(app: FastAPI, settings: Settings) -> None:
         _log.warning("testnet_execution_unavailable", reason=type(exc).__name__)
         return
 
-    if not account.can_trade:
-        _log.warning("testnet_execution_unavailable", reason="venue reports trading disabled")
+    if account.can_trade is not True:
+        # Unknown and denied both stop here; only the message differs, because
+        # an operator can act on the difference.
+        _log.warning(
+            "testnet_execution_unavailable",
+            reason=(
+                "venue reports trading disabled"
+                if account.can_trade is False
+                else "venue did not report a trading permission; refusing rather than assuming"
+            ),
+        )
         await adapter.aclose()
         return
 

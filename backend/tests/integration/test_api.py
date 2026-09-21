@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import pytest
 from fastapi.testclient import TestClient
 
 from aetheris import __version__
+from aetheris.core.config import Settings, get_settings
+from aetheris.main import create_app
 
 
 def test_liveness(client: TestClient) -> None:
@@ -52,6 +55,63 @@ def test_system_status_exposes_mode_posture(client: TestClient) -> None:
     assert modes["PAPER"]["enabled"] is True
     assert modes["LIVE"]["risks_real_funds"] is True
     assert modes["PAPER"]["places_real_orders"] is False
+
+
+def test_system_status_describes_this_app_not_the_process_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The status endpoint must answer for the app it is mounted on.
+
+    ``get_settings()`` is process-wide and re-reads the environment, so an
+    operator with ``AETHERIS_TESTNET_TRADING_ENABLED=true`` in their shell or
+    ``.env`` made this route announce TESTNET as enabled -- on an application
+    that had been constructed with testnet switched off. The endpoint and the
+    application it describes disagreed, which is worse than either answer:
+    anything reading it to decide whether execution is available would have
+    been told yes by a service that could not execute.
+
+    The environment here is set **hostile on purpose**. It says TESTNET is on;
+    the app says otherwise; the app must win.
+    """
+    monkeypatch.setenv("AETHERIS_TESTNET_TRADING_ENABLED", "true")
+    monkeypatch.setenv("AETHERIS_TESTNET_API_KEY", "not-a-real-key")
+    monkeypatch.setenv("AETHERIS_TESTNET_API_SECRET", "not-a-real-secret")
+    get_settings.cache_clear()
+
+    # Built explicitly with testnet disabled, whatever the environment says.
+    app_settings = Settings(
+        environment="test",
+        debug=False,
+        testnet_trading_enabled=False,
+        _env_file=None,  # type: ignore[call-arg]
+    )
+    assert app_settings.testnet_trading_enabled is False
+
+    with TestClient(create_app(app_settings)) as scoped:
+        modes = {m["mode"]: m for m in scoped.get("/api/v1/system/status").json()["modes"]}
+
+    assert modes["TESTNET"]["enabled"] is False, (
+        "the endpoint reported the process environment rather than the settings "
+        "the application was built with"
+    )
+    # And the environment really was hostile, so the assertion above means
+    # something: process-global settings would have said True here.
+    assert get_settings().testnet_trading_enabled is True
+    get_settings.cache_clear()
+
+
+def test_system_status_still_reflects_an_app_that_does_enable_a_mode() -> None:
+    """The mirror image, so the fix cannot be "always report disabled"."""
+    enabled = Settings(
+        environment="test",
+        debug=False,
+        paper_trading_enabled=False,
+        _env_file=None,  # type: ignore[call-arg]
+    )
+    with TestClient(create_app(enabled)) as scoped:
+        modes = {m["mode"]: m for m in scoped.get("/api/v1/system/status").json()["modes"]}
+    assert modes["PAPER"]["enabled"] is False
+    assert modes["ANALYSIS"]["enabled"] is True
 
 
 def test_system_status_reports_spec_risk_defaults(client: TestClient) -> None:

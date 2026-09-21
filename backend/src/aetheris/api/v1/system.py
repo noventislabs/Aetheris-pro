@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from pydantic import BaseModel
 
 from aetheris import __version__
@@ -47,8 +47,19 @@ class CapabilitiesResponse(BaseModel):
 
 
 @router.get("/system/status", response_model=SystemStatusResponse, summary="System status")
-async def system_status() -> SystemStatusResponse:
-    settings = get_settings()
+async def system_status(request: Request) -> SystemStatusResponse:
+    """Report the posture of **this** application instance.
+
+    The settings come from the running app, not from the process-wide cache.
+    That distinction is the whole point of the endpoint: ``get_settings()``
+    re-reads the environment, so an operator's ``.env`` could make this route
+    announce a mode the app in front of it had never been built with -- the
+    status endpoint would disagree with the application it describes.
+
+    The same injection the readiness probe uses, for the same reason, with the
+    same fallback for a caller that built no app state.
+    """
+    settings = getattr(request.app.state, "settings", None) or get_settings()
     return SystemStatusResponse(
         version=__version__,
         environment=settings.environment,

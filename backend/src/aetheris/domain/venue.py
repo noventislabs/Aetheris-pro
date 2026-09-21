@@ -53,7 +53,12 @@ class VenueAccount(BaseModel):
     #: cannot be silently attributed to a different account after a key swap.
     account_id: str
     position_mode: PositionMode
-    can_trade: bool
+    #: ``None`` means the venue did not say, which is **not** the same as a
+    #: refusal and must never be rendered as one. Callers treat anything other
+    #: than ``True`` as "do not trade", so unknown still fails closed -- the
+    #: distinction exists so an operator reading a refusal can tell "the venue
+    #: disabled this key" from "we could not find out".
+    can_trade: bool | None
     #: Available balance, when the venue reports one. ``None`` means unread,
     #: not zero.
     available_balance: Decimal | None = None
