@@ -291,9 +291,27 @@ CAPABILITIES: tuple[Capability, ...] = (
     Capability(
         key="order.engine",
         name="Order lifecycle and reconciliation",
+        status=CapabilityStatus.PARTIAL,
+        phase=8,
+        detail=(
+            "Phase 8a: the order state machine, deterministic identity and the "
+            "reconciliation protocol are built and tested. UNKNOWN can only be resolved "
+            "through RECONCILING, and never by inference. Reaches NO venue -- nothing "
+            "implements the trading port. **Crash recovery is NOT delivered**: records "
+            "are in-memory, so a restart loses the record a recovery pass would query. "
+            "That needs the durable store in phase 8b."
+        ),
+    ),
+    Capability(
+        key="order.persistence",
+        name="Durable order records",
         status=CapabilityStatus.PLANNED,
         phase=8,
-        detail="Idempotent submission and crash recovery. State vocabulary defined only.",
+        detail=(
+            "Order records that survive a restart, which is what turns the "
+            "reconciliation protocol into an actual crash-recovery guarantee. Needs the "
+            "PostgreSQL foundation from phase 1."
+        ),
     ),
     Capability(
         key="execution.testnet",

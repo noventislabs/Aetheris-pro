@@ -122,6 +122,24 @@ def evaluate(
             checks,
         )
 
+    # Before the daily lock, deliberately. If orders are unreconciled then the
+    # day's realised PnL may itself be wrong -- a fill this system has not seen
+    # is a fill not in the total -- so evaluating the daily limit first would
+    # mean judging a budget against numbers that are known to be incomplete.
+    checks.append("reconciliation_pending")
+    if account.unreconciled_orders > 0:
+        return _refuse(
+            RiskRejectionCode.RECONCILIATION_PENDING,
+            account.unreconciled_detail
+            or (
+                f"{account.unreconciled_orders} order(s) are awaiting reconciliation. "
+                "There may be a position at the venue that this system cannot see, so no "
+                "new entry is permitted until that is settled."
+            ),
+            not_reached,
+            checks,
+        )
+
     checks.append("daily_session_lock")
     if account.lock_state.blocks_entries:
         code = (

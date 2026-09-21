@@ -2,9 +2,10 @@
 
 Professional crypto trading and quantitative research platform.
 
-> **Phases 0, 2, 3, 4, 5, 6 and 7 of 10 — foundation, market data, scanner,
-> terminal, indicators, strategy analysis, backtesting, paper trading, the
-> risk engine and autonomous paper trading.**
+> **Phases 0, 2, 3, 4, 5, 6, 7 and 8a of 10 — foundation, market data,
+> scanner, terminal, indicators, strategy analysis, backtesting, paper
+> trading, the risk engine, autonomous paper trading, and the order
+> lifecycle.**
 > This build sends **no order to any exchange in any mode**. It holds no API
 > credential, has no database, and has no testnet or live execution path. What
 > exists is the foundation (configuration, exact money arithmetic, data
@@ -154,7 +155,7 @@ backend/           FastAPI service (Python 3.12+)
     domain/        enums and value objects (pure)
     api/v1/        HTTP surface
     adapters/      exchange + persistence integrations   (phase 1+)
-    engines/       paper engine (6) + risk engine (7)
+    engines/       paper (6) + risk (7) + order lifecycle (8a)
   tests/           unit + integration
 docs/              architecture, setup, ADRs
 frontend/          Next.js terminal
@@ -183,6 +184,8 @@ frontend/          Next.js terminal
   paper vs testnet vs live, and why leverage stays at 1x
 - [Risk engine and autonomy](docs/autonomous-trading.md) — final authority,
   the leverage ceiling derivation, the loop, and why it is off by default
+- [Order engine](docs/order-engine.md) — the state machine, deterministic
+  identity, and why `UNKNOWN` can only be resolved by asking
 - [Setup](docs/setup.md) — environment, commands, quality gates
 - [ADRs](docs/adr/) — recorded decisions, including the open database question
 

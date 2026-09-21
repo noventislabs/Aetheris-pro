@@ -1,6 +1,6 @@
 # Aetheris Pro — Architecture
 
-> Status: Phase 7 (risk engine and autonomous paper trading). This
+> Status: Phase 8a (order lifecycle). This
 > document describes the intended shape of
 > the whole system and marks clearly which parts exist today. Anything not
 > marked **implemented** is not built, and the running service reports the same
@@ -271,6 +271,34 @@ The loop depends on `PaperEngine` concretely. There is deliberately no
 
 Detail in [autonomous-trading.md](autonomous-trading.md).
 
+## 9h. Order lifecycle (phase 8a)
+
+`engines/order/` is the lifecycle an order has while this system is responsible
+for it. Pure, like `engines/risk/`, and for the same reason: it drives a state
+machine over a repository port and cannot reach a venue, so phase 8c attaching
+an adapter is a deliberate act rather than something that could happen by
+accident.
+
+It exists for one scenario -- the window between a submission leaving and a
+response arriving, in which local state cannot say whether an order exists. The
+answer is structural rather than careful: ``UNKNOWN`` has exactly one outgoing
+edge, ``RECONCILING``, so there is no path by which an unknown order becomes a
+filled one without something having asked the venue.
+
+Two other properties fall out of the same table. Submission requires validation,
+so the risk check is a prerequisite rather than a call site. And terminal states
+have no exits, so a late message about a settled order is recorded as evidence
+instead of overwriting it.
+
+``RISK_REJECTED_RECONCILIATION_PENDING`` -- defined in phase 0, unused until
+now -- blocks every new entry while anything is unreconciled, and sits *before*
+the daily lock because an unseen fill makes the day's realised PnL unreliable.
+
+**Crash recovery is not delivered.** The protocol is built and tested; the
+guarantee needs durable records, which is phase 8b on phase 1's database.
+
+Detail in [order-engine.md](order-engine.md).
+
 ## 9f. The route surface, and how it changed
 
 Phases 0–5 asserted that no route uses a method other than GET. Phase 6 makes
@@ -319,7 +347,9 @@ The invariant narrowed rather than disappearing. Two assertions replace it:
 | Autonomous paper trading (off by default) | implemented, tested |
 | Risk engine (final authority over every proposal) | implemented, tested |
 | Portfolio accounting | **not started** (phase 7+) |
-| Order engine, testnet, live | **not started** (phases 8, 10) |
+| Order lifecycle, identity, reconciliation protocol | implemented, tested |
+| Durable order records / crash recovery | **not started** (phase 8b) |
+| Testnet, live execution | **not started** (phases 8c, 10) |
 | AI / Falcon | **not started** (phase 9) |
 | Frontend terminal (markets, scanner, backtest, paper) | implemented, tested |
 

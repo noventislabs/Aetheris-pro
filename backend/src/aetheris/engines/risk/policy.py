@@ -89,6 +89,13 @@ class RiskAccountView:
     emergency_stopped: bool = False
     emergency_reason: str | None = None
     mode_enabled: bool = True
+    #: Orders whose fate this system does not know -- UNKNOWN or RECONCILING.
+    #: Any at all blocks new entries: there may be a position at a venue that
+    #: this system cannot see, and sizing the next order against that is how a
+    #: small outage becomes a large loss. Zero for paper, which has no venue to
+    #: be out of step with.
+    unreconciled_orders: int = 0
+    unreconciled_detail: str | None = None
     #: When this symbol was last entered, for the cooldown. None means never.
     last_entry_at: datetime | None = None
 

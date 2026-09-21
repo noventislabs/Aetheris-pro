@@ -254,7 +254,7 @@ def test_capabilities_now_report_market_data_as_available(
     assert by_key["exchange.binance_futures"]["status"] == "AVAILABLE"
     assert by_key["market.symbol_discovery"]["status"] == "AVAILABLE"
     # Execution remains unclaimed.
-    assert by_key["order.engine"]["status"] == "PLANNED"
+    assert by_key["order.persistence"]["status"] == "PLANNED"
     assert by_key["execution.live"]["status"] == "PLANNED"
 
 

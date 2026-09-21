@@ -470,3 +470,98 @@ def test_the_autonomous_loop_takes_no_trading_mode_parameter() -> None:
                 f"AutonomousLoop.{name} takes a trading mode; autonomy is a paper "
                 "component and must not be pointed at another mode by argument"
             )
+
+
+# ----------------------------------------------------------------------
+# Phase 8a: the order engine, and the boundary it must not cross yet
+# ----------------------------------------------------------------------
+
+ORDER_ROOT = PACKAGE_ROOT / "engines" / "order"
+
+
+def order_source_files() -> list[pathlib.Path]:
+    return sorted(ORDER_ROOT.rglob("*.py"))
+
+
+def test_there_are_order_engine_modules_to_check() -> None:
+    assert len(order_source_files()) >= 5
+
+
+@pytest.mark.parametrize("path", order_source_files(), ids=lambda p: p.name)
+def test_the_order_engine_is_pure(path: pathlib.Path) -> None:
+    """It drives a lifecycle; it does not reach a venue.
+
+    Phase 8c attaches an adapter to this. That the lifecycle itself cannot
+    import a transport is what keeps the attachment a deliberate act rather
+    than something that could happen by accident.
+    """
+    offenders = {
+        module for module in imported_modules(path) if module.startswith(FORBIDDEN_PREFIXES)
+    }
+    assert not offenders, (
+        f"{path.relative_to(PACKAGE_ROOT)} imports {sorted(offenders)}; the order "
+        "lifecycle must stay free of transport, frameworks and venues"
+    )
+
+
+def test_venue_names_do_not_leak_into_the_order_engine() -> None:
+    """No exemption. The client-order-id cap is described, not attributed.
+
+    The concrete value belongs with the adapter in phase 8c, where venue facts
+    live -- the same resolution phase 4 reached for the leverage brackets.
+    """
+    for path in order_source_files():
+        source = path.read_text(encoding="utf-8").lower()
+        assert "binance" not in source, (
+            f"{path.relative_to(PACKAGE_ROOT)} mentions a specific venue"
+        )
+
+
+def test_the_order_engine_names_no_credential_or_withdrawal_concept() -> None:
+    for path in order_source_files():
+        source = path.read_text(encoding="utf-8").lower()
+        for token in ("api_key", "apikey", "api_secret", "signature", "hmac", "withdraw"):
+            assert token not in source, f"{path.relative_to(PACKAGE_ROOT)} names {token}"
+
+
+def test_phase_8a_introduces_no_venue_execution_path() -> None:
+    """8a builds the lifecycle. 8c gives it somewhere to submit.
+
+    Until then nothing implements TradingPort, and no venue trading host or
+    order path appears anywhere in the package.
+    """
+    assert not TradingPort.__subclasses__()
+    banned = (
+        "/fapi/v1/order",
+        "/fapi/v1/batchOrders",
+        "/fapi/v2/account",
+        "/fapi/v1/leverageBracket",
+        "testnet.binance",
+        "testnet.binancefuture",
+    )
+    for path in PACKAGE_ROOT.rglob("*.py"):
+        source = path.read_text(encoding="utf-8").lower()
+        for token in banned:
+            assert token not in source, f"{path.relative_to(PACKAGE_ROOT)} references {token}"
+
+
+def test_unknown_cannot_reach_a_resolved_state_without_reconciling() -> None:
+    """The safety property of the phase, asserted at the architecture level.
+
+    Duplicated from the state-machine suite deliberately: this is the invariant
+    the rest of phase 8 is built on, and it should fail loudly in the file that
+    exists to catch erosion.
+    """
+    from aetheris.domain.enums import OrderState
+    from aetheris.engines.order.machine import LEGAL_TRANSITIONS
+
+    assert LEGAL_TRANSITIONS[OrderState.UNKNOWN] == frozenset({OrderState.RECONCILING})
+
+
+def test_the_order_engine_does_not_claim_crash_recovery_without_a_durable_store() -> None:
+    """The protocol is built; the guarantee needs phase 8b's database."""
+    from aetheris.engines.order.engine import OrderLifecycleEngine
+    from aetheris.engines.order.store import InMemoryOrderRepository
+
+    engine = OrderLifecycleEngine(InMemoryOrderRepository())
+    assert engine.supports_crash_recovery is False

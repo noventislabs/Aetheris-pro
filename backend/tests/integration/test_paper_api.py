@@ -182,7 +182,7 @@ def test_capabilities_report_paper_as_built_and_execution_as_not(client: TestCli
     assert by_key["risk.engine"]["status"] == "AVAILABLE"
     assert by_key["execution.testnet"]["status"] == "PLANNED"
     assert by_key["execution.live"]["status"] == "PLANNED"
-    assert by_key["order.engine"]["status"] == "PLANNED"
+    assert by_key["order.persistence"]["status"] == "PLANNED"
 
 
 # ----------------------------------------------------------------------

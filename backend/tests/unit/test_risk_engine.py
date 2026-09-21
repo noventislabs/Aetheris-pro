@@ -498,3 +498,88 @@ def test_a_maximally_confident_looking_proposal_is_still_refused_when_locked() -
         proposal=proposal(bias="LONG_BIAS", conditions_met=4, conditions_total=4),
     )
     assert v.code is RiskRejectionCode.DAILY_LOSS_LIMIT
+
+
+# ----------------------------------------------------------------------
+# Phase 8a: unreconciled orders block entry
+#
+# RISK_REJECTED_RECONCILIATION_PENDING has been in the vocabulary since phase 0
+# and had never fired. This is what it is for.
+# ----------------------------------------------------------------------
+
+
+def test_an_unreconciled_order_blocks_new_entries() -> None:
+    """There may be a position at the venue that this system cannot see."""
+    v = verdict(account=account(unreconciled_orders=1))
+    assert v.code is RiskRejectionCode.RECONCILIATION_PENDING
+    assert "cannot see" in v.detail
+
+
+def test_nothing_unreconciled_does_not_block() -> None:
+    assert verdict(account=account(unreconciled_orders=0)).approved
+
+
+def test_the_order_engine_s_own_wording_is_used_when_supplied() -> None:
+    v = verdict(
+        account=account(
+            unreconciled_orders=2,
+            unreconciled_detail="2 order(s) awaiting reconciliation: aeth-abc, aeth-def.",
+        )
+    )
+    assert "aeth-abc" in v.detail
+
+
+def test_reconciliation_pending_outranks_the_daily_lock() -> None:
+    """Deliberate ordering, not an accident of sequence.
+
+    If orders are unreconciled then the day's realised PnL may itself be wrong
+    -- a fill this system has not seen is a fill not in the total -- so judging
+    the daily budget first would mean judging it against numbers already known
+    to be incomplete.
+    """
+    v = verdict(
+        account=account(
+            unreconciled_orders=1,
+            lock_state=RiskLockState.DAILY_LOSS_LIMIT,
+        )
+    )
+    assert v.code is RiskRejectionCode.RECONCILIATION_PENDING
+
+
+def test_an_emergency_stop_still_outranks_reconciliation() -> None:
+    """A halt is more fundamental than not knowing."""
+    v = verdict(account=account(unreconciled_orders=1, emergency_stopped=True))
+    assert v.code is RiskRejectionCode.EMERGENCY_STOP
+
+
+def test_reconciliation_pending_outranks_stale_data_and_sizing() -> None:
+    v = verdict(
+        account=account(unreconciled_orders=1),
+        market=market(status=DataStatus.UNAVAILABLE, last_price=None),
+        proposal=proposal(requested_margin=Decimal(-5)),
+    )
+    assert v.code is RiskRejectionCode.RECONCILIATION_PENDING
+
+
+def test_the_check_is_recorded_in_the_audit_trail() -> None:
+    assert "reconciliation_pending" in verdict().checks_performed
+
+
+def test_paper_is_unaffected_because_it_has_no_venue_to_disagree_with() -> None:
+    """The default is zero, so phase 6 and 7 behaviour is unchanged."""
+    from aetheris.engines.risk.policy import RiskAccountView
+
+    default = RiskAccountView(
+        balance=Decimal(100),
+        available_balance=Decimal(100),
+        equity=Decimal(100),
+        margin_used=Decimal(0),
+        open_symbols=frozenset(),
+        open_position_count=0,
+        total_notional=Decimal(0),
+        session_realized_pnl=Decimal(0),
+        daily_profit_target=Decimal(20),
+        daily_loss_limit=Decimal(-10),
+        lock_state=RiskLockState.NONE,
+    )
+    assert default.unreconciled_orders == 0

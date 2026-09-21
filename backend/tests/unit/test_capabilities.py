@@ -32,7 +32,7 @@ def test_real_execution_capabilities_are_not_claimed_in_this_build() -> None:
     reaches a venue is not.
     """
     for key in (
-        "order.engine",
+        "order.persistence",
         "execution.testnet",
         "execution.live",
         "falcon.command_center",
@@ -43,6 +43,20 @@ def test_real_execution_capabilities_are_not_claimed_in_this_build() -> None:
         assert capability.status is CapabilityStatus.PLANNED, (
             f"{key} claims {capability.status} but no engine is implemented"
         )
+
+
+def test_the_order_engine_does_not_claim_crash_recovery() -> None:
+    """Phase 8a built the protocol. The guarantee needs 8b's durable store.
+
+    Claiming recovery over in-memory records would be the sharpest untruth this
+    registry could tell: the thing a recovery pass queries is exactly the thing
+    a restart destroys.
+    """
+    engine = get_capability("order.engine")
+    assert engine is not None
+    assert engine.status is CapabilityStatus.PARTIAL
+    assert "Crash recovery is NOT delivered" in engine.detail
+    assert "NO venue" in engine.detail
 
 
 def test_autonomous_trading_states_that_it_is_off_by_default() -> None:
