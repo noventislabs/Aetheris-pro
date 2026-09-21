@@ -114,7 +114,12 @@ These are enforced by code and tests, not by convention:
 - **Dynamic USDT-M symbol discovery** — the universe is read from the venue,
   not hardcoded, with per-instrument filters.
 - **Market scanner** — bounded search, filter, sort and pagination, with a
-  deterministic and fully published Market Opportunity Score.
+  deterministic and fully published Market Opportunity Score. Strategy setup
+  scoring is available as an opt-in enrichment and a sort key; it reaches a
+  smaller pool than metrics do, because every indicator has to warm up, and
+  the page reports `STRATEGY_POOL` with that pool's size rather than letting
+  a slice read as the whole market. Both scores travel separately and are
+  never merged.
 - **11 technical indicators** — SMA, EMA, Bollinger Bands, Rolling VWAP, RSI,
   MACD, Stochastic Oscillator, ATR, ADX, ROC, CCI. No look-ahead; warm-up
   rules are explicit.

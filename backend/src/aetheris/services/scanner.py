@@ -39,6 +39,8 @@ from aetheris.adapters.exchange.errors import ExchangeError
 from aetheris.adapters.exchange.ports import MarketDataPort
 from aetheris.analysis.metrics import compute_metrics
 from aetheris.analysis.scoring import score_opportunity
+from aetheris.analysis.setup import evaluate_setup
+from aetheris.analysis.strategies.registry import DataContext
 from aetheris.core.config import MarketDataSettings, ScannerSettings
 from aetheris.core.freshness import DataStatus, Observation, utcnow
 from aetheris.core.logging import get_logger
@@ -78,7 +80,12 @@ METRIC_SORT_FIELDS: Final = frozenset(
     }
 )
 
-SORT_FIELDS: Final = TICKER_SORT_FIELDS | METRIC_SORT_FIELDS
+#: Ordering by strategy alignment. Its own set because it forces a different,
+#: smaller pool: setup scoring needs every indicator warmed up, which is
+#: several times the candle window metrics need.
+SETUP_SORT_FIELDS: Final = frozenset({"setup_score"})
+
+SORT_FIELDS: Final = TICKER_SORT_FIELDS | METRIC_SORT_FIELDS | SETUP_SORT_FIELDS
 
 _TICKER_ACCESSORS: Final[dict[str, Callable[[ScannerRow], Decimal | str | None]]] = {
     "symbol": lambda r: r.symbol,
@@ -95,6 +102,7 @@ _METRIC_ACCESSORS: Final[dict[str, Callable[[ScannerRow], Decimal | None]]] = {
     "relative_volume": lambda r: r.metrics.relative_volume if r.metrics else None,
     "trend_consistency": lambda r: r.metrics.trend_consistency if r.metrics else None,
     "opportunity_score": lambda r: r.opportunity.score if r.opportunity else None,
+    "setup_score": lambda r: r.setup.score.value if r.setup and r.setup.score else None,
 }
 
 
@@ -131,11 +139,20 @@ class ScanQuery:
     page_size: int = 25
     timeframe: Timeframe = Timeframe.H1
     include_metrics: bool = False
+    include_setup: bool = False
     filters: ScanFilters = field(default_factory=ScanFilters)
 
     @property
     def sorts_by_metric(self) -> bool:
         return self.sort_by in METRIC_SORT_FIELDS
+
+    @property
+    def sorts_by_setup(self) -> bool:
+        return self.sort_by in SETUP_SORT_FIELDS
+
+    @property
+    def needs_setups(self) -> bool:
+        return self.include_setup or self.sorts_by_setup
 
 
 class ScannerService:
@@ -175,7 +192,15 @@ class ScannerService:
         rows = [row for row in rows if self._passes_ticker_filters(row, query.filters)]
 
         needs_pool = query.sorts_by_metric or query.filters.needs_metrics
-        if needs_pool:
+        setup_pool: int | None = None
+        if query.needs_setups:
+            # Setup scoring subsumes metrics: it pulls a longer candle window
+            # and derives both from the one observation, so asking for it
+            # never costs a second round of upstream requests.
+            rows, setup_pool = await self._rank_with_setups(rows, query)
+            pool_size = setup_pool
+            scope = RankingScope.STRATEGY_POOL
+        elif needs_pool:
             rows, pool_size = await self._rank_with_metrics(rows, query)
             scope = RankingScope.LIQUIDITY_POOL
         else:
@@ -188,7 +213,7 @@ class ScannerService:
 
         # In full-universe mode metrics are an optional extra, computed only
         # for the rows actually being returned.
-        if query.include_metrics and not needs_pool:
+        if query.include_metrics and not needs_pool and not query.needs_setups:
             page_rows = await self._attach_metrics(page_rows, query.timeframe)
 
         return ScannerPage(
@@ -199,6 +224,7 @@ class ScannerService:
             universe_size=len(universe),
             ranking_scope=scope,
             candidate_pool_size=pool_size,
+            setup_pool_size=setup_pool,
             sort_by=query.sort_by,
             direction="desc" if query.descending else "asc",
             ticker_source=ticker_observation.source,
@@ -345,6 +371,111 @@ class ScannerService:
             scored = [r for r in scored if self._passes_metric_filters(r, query.filters)]
 
         return self._sort(scored, query.sort_by, descending=query.descending), len(candidates)
+
+    async def _rank_with_setups(
+        self, rows: list[ScannerRow], query: ScanQuery
+    ) -> tuple[list[ScannerRow], int]:
+        """Score the most liquid slice against the strategy, then rank it.
+
+        The pool is deliberately smaller than the metric pool. Setup scoring
+        needs every indicator warmed up -- the strategy's slowest leg is
+        EMA(55), and the regime classifier adds Bollinger on top -- so each
+        instrument costs several times the candles a metric row does. Ranking
+        the whole universe this way is not a slow option; it is a rate-limit
+        ban and an out-of-memory error on an 8 GB machine.
+
+        The page reports ``STRATEGY_POOL`` and the pool size, so a caller is
+        never told the whole market was scored when a slice of it was.
+        """
+        pool_size = min(self._settings.setup_pool_size, self._settings.max_metric_symbols)
+        candidates = self._sort(rows, "quote_volume_24h", descending=True)[:pool_size]
+
+        scored = await self._attach_setups(candidates, query.timeframe)
+        if query.filters.needs_metrics:
+            scored = [r for r in scored if self._passes_metric_filters(r, query.filters)]
+
+        return self._sort(scored, query.sort_by, descending=query.descending), len(candidates)
+
+    async def _attach_setups(
+        self, rows: list[ScannerRow], timeframe: Timeframe
+    ) -> list[ScannerRow]:
+        """Fetch the longer candle window once, and derive everything from it.
+
+        Metrics, the opportunity score and the strategy setup all come from
+        the same observation. Fetching twice would double the request count
+        for no new information, and the two could even disagree if they
+        straddled a bar close.
+
+        A per-symbol failure degrades that row and never fails the scan,
+        which is the rule the metric path already follows.
+        """
+        if not rows:
+            return rows
+
+        semaphore = asyncio.Semaphore(self._settings.metric_concurrency)
+        now = utcnow()
+
+        async def enrich(row: ScannerRow) -> ScannerRow:
+            async with semaphore:
+                try:
+                    observation = await self._exchange.get_klines(
+                        row.symbol, timeframe, limit=self._settings.setup_candle_limit
+                    )
+                except ExchangeError as exc:
+                    reason = f"{exc.code}: candles could not be retrieved"
+                    return row.model_copy(
+                        update={
+                            "metrics_status": MetricStatus.UNAVAILABLE,
+                            "metrics_detail": reason,
+                            "setup_status": MetricStatus.UNAVAILABLE,
+                            "setup_detail": reason,
+                        }
+                    )
+
+            if observation.value is None:
+                reason = observation.detail or f"Candles unavailable ({observation.status})"
+                return row.model_copy(
+                    update={
+                        "metrics_status": MetricStatus.UNAVAILABLE,
+                        "metrics_detail": reason,
+                        "setup_status": MetricStatus.UNAVAILABLE,
+                        "setup_detail": reason,
+                    }
+                )
+
+            update: dict[str, object] = {}
+            metrics: ScannerMetrics | None = compute_metrics(observation.value, now)
+            if metrics is None:
+                update["metrics_status"] = MetricStatus.INSUFFICIENT_DATA
+                update["metrics_detail"] = "Not enough closed candles to compute statistics"
+            else:
+                update["metrics_status"] = MetricStatus.CALCULATED
+                update["metrics"] = metrics
+                update["opportunity"] = score_opportunity(metrics)
+
+            # The same freshness gate the analysis endpoint applies, reached
+            # through the same function. The setup carries its own internal
+            # status, so a STALE or INSUFFICIENT_DATA reading still lands on
+            # the row with its reason rather than becoming an unexplained null.
+            context = DataContext(
+                symbol=row.symbol,
+                timeframe=timeframe,
+                source=observation.source,
+                data_status=observation.status.value,
+                age_seconds=observation.age_seconds,
+            )
+            update["setup"] = evaluate_setup(observation.value.candles, context=context, now=now)
+            update["setup_status"] = MetricStatus.CALCULATED
+            return row.model_copy(update=update)
+
+        enriched = await asyncio.gather(*(enrich(row) for row in rows))
+        _log.info(
+            "market_data_updated",
+            kind="scanner_setups",
+            symbols=len(rows),
+            timeframe=timeframe.value,
+        )
+        return list(enriched)
 
     async def _attach_metrics(
         self, rows: list[ScannerRow], timeframe: Timeframe

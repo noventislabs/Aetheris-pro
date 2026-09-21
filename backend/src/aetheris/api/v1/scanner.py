@@ -84,6 +84,17 @@ async def scan(
             )
         ),
     ] = False,
+    include_setup: Annotated[
+        bool,
+        Query(
+            description=(
+                "Score each row against the strategy rule set. Needs a longer "
+                "candle window than metrics do, so it reaches a smaller pool and "
+                "is off by default. The score is strategy alignment, NOT a "
+                "probability of profit."
+            )
+        ),
+    ] = False,
     quote_asset: Annotated[str | None, Query(max_length=16, pattern=r"^[A-Za-z0-9]+$")] = None,
     min_quote_volume: Annotated[Decimal | None, Query(ge=0)] = None,
     min_price_change_percent: Annotated[Decimal | None, Query(ge=-100, le=10_000)] = None,
@@ -102,6 +113,17 @@ async def scan(
     and how large the pool was — a subset is never presented as the whole
     market.
 
+    Asking for setup scores narrows the scope further (`STRATEGY_POOL`), because
+    every indicator has to warm up before a rule set can be evaluated at all.
+    The page reports that pool size separately.
+
+    **The two scores are different things and are never merged.** The Market
+    Opportunity Score ranks how unusually active an instrument is right now.
+    The Strategy Setup Score measures how completely one strategy's published
+    rules are currently satisfied and whether the trade is worth its own risk.
+    Neither is a probability of profit, a win rate or an expected return, and
+    no ordering here implies one instrument will outperform another.
+
     **Unavailable values never become zero.** A row whose sort value is unknown
     sorts last in both directions and is ordered among its peers by symbol.
     """
@@ -112,6 +134,7 @@ async def scan(
         page_size=page_size,
         timeframe=timeframe,
         include_metrics=include_metrics,
+        include_setup=include_setup,
         filters=ScanFilters(
             search=search,
             quote_asset=quote_asset,

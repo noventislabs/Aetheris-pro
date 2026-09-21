@@ -209,6 +209,15 @@ class ScannerSettings(BaseSettings):
     #: bar being dropped -- and no more, because this multiplies by the pool.
     candle_limit: int = Field(default=60, ge=20, le=500)
 
+    #: Setup scoring is opt-in and reaches fewer instruments than metrics do,
+    #: because it needs every indicator warmed up. The strategy's slowest leg
+    #: is EMA(55), so 60 bars would leave almost no margin and the regime
+    #: classifier would refuse half the pool; 200 gives real headroom. That
+    #: multiplies by the pool, which is why the pool is a third of the metric
+    #: one rather than the same size.
+    setup_pool_size: int = Field(default=20, ge=1, le=60)
+    setup_candle_limit: int = Field(default=200, ge=80, le=500)
+
 
 class AnalysisSettings(BaseSettings):
     """Bounds for indicator and strategy analysis.

@@ -237,7 +237,8 @@ CAPABILITIES: tuple[Capability, ...] = (
             "one. Historical performance is deliberately excluded from the score and "
             "reported separately as backtest metrics. Served read-only at "
             "GET /api/v1/analysis/{symbol}/setup, which delegates to this engine and "
-            "reimplements none of it."
+            "reimplements none of it. The scanner can rank by it, within a bounded "
+            "pool the page names explicitly."
         ),
     ),
     Capability(

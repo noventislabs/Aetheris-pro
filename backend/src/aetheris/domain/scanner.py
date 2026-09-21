@@ -19,6 +19,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from aetheris.core.freshness import DataStatus
 from aetheris.domain.enums import ContractType, SymbolStatus, Timeframe
+from aetheris.domain.setup import TradeSetup
 
 
 class MetricStatus(StrEnum):
@@ -145,6 +146,15 @@ class ScannerRow(BaseModel):
     metrics: ScannerMetrics | None = None
     opportunity: OpportunityScore | None = None
 
+    #: Strategy setup scoring, only when the scan asked for it. Separate from
+    #: ``opportunity`` on purpose: the two answer different questions and must
+    #: not be conflated. The opportunity score ranks how unusually active an
+    #: instrument is; a setup score measures how completely one strategy's
+    #: published rules are currently satisfied. Neither is a probability.
+    setup_status: MetricStatus = MetricStatus.NOT_REQUESTED
+    setup_detail: str | None = None
+    setup: TradeSetup | None = None
+
 
 class RankingScope(StrEnum):
     """How far the ordering actually reaches.
@@ -159,6 +169,10 @@ class RankingScope(StrEnum):
     #: Candle metrics were computed for the most liquid N instruments only,
     #: and the ordering covers that pool.
     LIQUIDITY_POOL = "LIQUIDITY_POOL"
+    #: Setup scoring reaches fewer instruments still -- it needs enough bars
+    #: for every indicator to warm up, which is several times the metric
+    #: window. The ordering covers only the instruments actually scored.
+    STRATEGY_POOL = "STRATEGY_POOL"
 
 
 class ScannerPage(BaseModel):
@@ -174,6 +188,10 @@ class ScannerPage(BaseModel):
     ranking_scope: RankingScope
     candidate_pool_size: int | None = Field(
         default=None, description="Instruments given candle metrics, when scope is LIQUIDITY_POOL"
+    )
+    setup_pool_size: int | None = Field(
+        default=None,
+        description="Instruments given a strategy setup score, when one was requested",
     )
     sort_by: str
     direction: str
@@ -204,6 +222,10 @@ class ScannerSortField(StrEnum):
     RELATIVE_VOLUME = "relative_volume"
     TREND_CONSISTENCY = "trend_consistency"
     OPPORTUNITY_SCORE = "opportunity_score"
+    #: Strategy alignment, not a probability of profit. Ordering by it ranks
+    #: only the instruments that were actually scored, and the page says how
+    #: many that was.
+    SETUP_SCORE = "setup_score"
 
 
 class SortDirection(StrEnum):
