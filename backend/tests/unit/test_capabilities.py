@@ -139,12 +139,25 @@ def test_the_risk_engine_does_not_claim_to_unlock_leverage() -> None:
 
 
 def test_paper_state_durability_is_disclosed_as_partial() -> None:
-    """A balance that silently resets is worse than one the user knows resets."""
+    """Durable now, but conditionally, and the entry has to say on what.
+
+    It used to shout that state RESETS ON RESTART, which stopped being true
+    when the snapshot store landed. The honest replacement is not silence:
+    durability depends on DATABASE_URL, degrades when a write fails, and
+    two pieces of state are still deliberately not persisted. A reader who
+    only saw "durable" would over-trust it.
+    """
     durability = get_capability("paper.persistence")
     assert durability is not None
     assert durability.status is CapabilityStatus.PARTIAL
-    assert "IN-MEMORY" in durability.detail
-    assert "RESETS ON RESTART" in durability.detail
+    assert durability.status is not CapabilityStatus.AVAILABLE
+    assert "PostgreSQL" in durability.detail
+    assert "restored at startup" in durability.detail
+    # The three reasons it is not AVAILABLE, each stated.
+    assert "CONDITIONAL ON DATABASE_URL" in durability.detail
+    assert "reports IN-MEMORY" in durability.detail
+    assert "autonomy arm state" in durability.detail
+    assert "RESETS ON RESTART" not in durability.detail
 
 
 def test_the_paper_engine_states_that_it_places_no_real_order() -> None:
@@ -228,16 +241,17 @@ def test_database_persistence_is_partial_and_states_all_three_of_its_limits() ->
     assert database.status is CapabilityStatus.PARTIAL
     assert database.status is not CapabilityStatus.AVAILABLE
     assert "PostgreSQL" in database.detail
-    assert "0001-0004" in database.detail
+    assert "0001-0005" in database.detail
 
     # 1. Conditional on configuration, not unconditional.
     assert "DATABASE_URL" in database.detail
     assert "NOT_CONFIGURED" in database.detail
 
-    # 2. Order records, not the paper account. Shouted, because a user reading
-    #    "PostgreSQL persistence" will otherwise assume their balance survives.
-    assert "STILL IN MEMORY" in database.detail
-    assert "RESET ON RESTART" in database.detail
+    # 2. Scope. This used to exclude the paper account entirely; the paper
+    #    snapshot store brought it in, so the entry now says so rather than
+    #    continuing to warn about a limitation that was lifted.
+    assert "paper account state" in database.detail
+    assert "STILL IN MEMORY" not in database.detail
 
     # 3. Phase 1 is not finished.
     assert "Argon2id" in database.detail

@@ -28,6 +28,7 @@ from aetheris.adapters.persistence.engine import (
     check_connectivity,
 )
 from aetheris.adapters.persistence.orders import PostgresOrderRepository
+from aetheris.adapters.persistence.paper import PostgresPaperSnapshotStore
 from aetheris.api.exception_handlers import register_exception_handlers
 from aetheris.api.middleware import RequestContextMiddleware, SecurityHeadersMiddleware
 from aetheris.api.v1.router import api_router
@@ -35,6 +36,7 @@ from aetheris.core.config import Settings, get_settings
 from aetheris.core.freshness import utcnow
 from aetheris.core.logging import configure_logging, get_logger
 from aetheris.domain.enums import TradingMode
+from aetheris.domain.paper import Durability
 from aetheris.engines.order.engine import OrderLifecycleEngine
 from aetheris.engines.paper.engine import PaperEngine, PaperEngineConfig
 from aetheris.engines.paper.store import InMemoryPaperRepository
@@ -69,6 +71,8 @@ async def _open_order_store(app: FastAPI, settings: Settings) -> None:
     app.state.order_engine = None
     app.state.order_account_id = None
     app.state.order_recovery = None
+    app.state.paper_snapshots = None
+    app.state.paper_restored = False
 
     if settings.database_url is None:
         _log.info(
@@ -115,6 +119,15 @@ async def _open_order_store(app: FastAPI, settings: Settings) -> None:
     # count was hardcoded to zero. Binding the store is what makes it fire.
     app.state.paper_service.bind_order_engine(order_engine)
 
+    # Paper state. Bound and then restored, in that order: the restore
+    # reads through the store, so binding has to come first. A first run
+    # finds nothing and starts fresh, which is not a failure.
+    snapshots = PostgresPaperSnapshotStore(factory, owner_id=owner_id, account_id=account_id)
+    app.state.paper_snapshots = snapshots
+    app.state.paper_service.bind_snapshot_store(snapshots)
+    paper_restored = await app.state.paper_service.restore()
+    app.state.paper_restored = paper_restored
+
     _log.info(
         "database_ready",
         detail=detail,
@@ -122,7 +135,11 @@ async def _open_order_store(app: FastAPI, settings: Settings) -> None:
         # Named per subsystem, because one of these is true and the other is
         # not. Paper account state is still in memory by design.
         order_crash_recovery=True,
-        paper_crash_recovery=False,
+        # No longer a constant. Paper state is durable when the store is
+        # attached and its writes are landing, and the store answers for
+        # that rather than the configuration claiming it.
+        paper_crash_recovery=snapshots.durability is Durability.DURABLE,
+        paper_state_restored=paper_restored,
         recovery_scanned=report.scanned,
         recovery_interrupted=len(report.interrupted),
         recovery_never_submitted=len(report.never_submitted),

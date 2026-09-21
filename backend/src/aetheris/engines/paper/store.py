@@ -13,6 +13,7 @@ resets is worse than one the user knows resets.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from datetime import datetime
 from decimal import Decimal
 
@@ -64,10 +65,23 @@ class InMemoryPaperRepository(PaperRepository):
     def __init__(self, *, starting_balance: Decimal, now: datetime) -> None:
         self._starting_balance = starting_balance
         self._state = self._fresh(starting_balance, now)
+        self._durability_probe: Callable[[], Durability] | None = None
+
+    def set_durability_probe(self, probe: Callable[[], Durability] | None) -> None:
+        """Let a durable store beside this one answer for durability.
+
+        A probe rather than a flag, because the answer changes: a store
+        whose last write failed is not durable any more, and the account
+        response has to stop promising a restart will preserve anything.
+        Asking each time is what keeps that honest.
+        """
+        self._durability_probe = probe
 
     @property
     def durability(self) -> Durability:
-        return Durability.IN_MEMORY
+        if self._durability_probe is None:
+            return Durability.IN_MEMORY
+        return self._durability_probe()
 
     @staticmethod
     def _fresh(starting_balance: Decimal, now: datetime) -> PaperState:
@@ -92,6 +106,16 @@ class InMemoryPaperRepository(PaperRepository):
         self._starting_balance = starting_balance
         self._state = self._fresh(starting_balance, now)
         return self._state
+
+    def replace(self, state: PaperState) -> None:
+        """Adopt state loaded from durable storage.
+
+        Separate from ``save`` because it means the opposite: ``save``
+        records what the engine just did, ``replace`` discards what the
+        engine has in favour of what was stored. Only startup should call
+        it, and calling it later would silently roll an account back.
+        """
+        self._state = state
 
     def reconcile(self, now: datetime) -> ReconciliationReport:
         """Nothing external to reconcile against.

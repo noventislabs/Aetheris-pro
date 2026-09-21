@@ -87,15 +87,16 @@ CAPABILITIES: tuple[Capability, ...] = (
         status=CapabilityStatus.PARTIAL,
         phase=1,
         detail=(
-            "PostgreSQL persistence and Alembic migrations 0001-0004 are implemented: "
-            "users, accounts, orders, order_fills and order_discrepancies, with "
+            "PostgreSQL persistence and Alembic migrations 0001-0005 are implemented: "
+            "users, accounts, orders, order_fills, order_discrepancies and "
+            "paper_state_snapshots, with "
             "NUMERIC(24,8) money, timestamptz time and row-level security. Durability is "
             "CONDITIONAL on configuration: without DATABASE_URL there is no store at all "
             "-- readiness reports NOT_CONFIGURED, the order lifecycle is absent, and "
             "nothing claims crash recovery. There is deliberately no in-memory fallback. "
-            "Scope is order records and the accounts they belong to: the PAPER ACCOUNT "
-            "BALANCE, POSITIONS, DAY SESSION AND EMERGENCY-STOP FLAG ARE STILL IN MEMORY "
-            "AND STILL RESET ON RESTART. PARTIAL, not AVAILABLE: phase 1's authentication "
+            "Scope now covers order records, the accounts they belong to, and paper "
+            "account state -- balance, positions, day session and emergency-stop flag "
+            "are written down and restored. PARTIAL, not AVAILABLE: phase 1's authentication "
             "is not built -- the users table exists, Argon2id credentials and sessions "
             "do not."
         ),
@@ -306,10 +307,18 @@ CAPABILITIES: tuple[Capability, ...] = (
         status=CapabilityStatus.PARTIAL,
         phase=6,
         detail=(
-            "PAPER STATE IS IN-MEMORY AND RESETS ON RESTART. Balances, positions, "
-            "orders and history live in the server process only. The repository "
-            "interface is in place so durable storage is a new implementation rather "
-            "than a rewrite, but it needs the database from phase 1."
+            "Balances, positions, the order log, trade history and the daily session "
+            "are written to PostgreSQL after every mutation and restored at startup, "
+            "so an account survives the process that created it. One versioned "
+            "document per account, replaced atomically, behind the same row-level "
+            "security every other tenant table carries. Money crosses as strings, "
+            "never JSON numbers, and the round trip is asserted exact on values "
+            "chosen to break float. PARTIAL, not AVAILABLE, for three reasons: it is "
+            "CONDITIONAL ON DATABASE_URL and reverts to IN-MEMORY without one; a "
+            "store whose last write failed reports IN-MEMORY rather than continuing "
+            "to promise durability; and two pieces of state are still deliberately "
+            "not persisted -- the per-symbol entry cooldown, and the autonomy arm "
+            "state, which starts disarmed on every boot by design."
         ),
     ),
     Capability(

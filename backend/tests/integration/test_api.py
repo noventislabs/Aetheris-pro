@@ -142,7 +142,7 @@ def test_capabilities_endpoint_lists_planned_work(client: TestClient) -> None:
     assert database["status"] == "PARTIAL"
     assert "No database is configured" not in database["detail"]
     assert "PostgreSQL" in database["detail"]
-    assert "STILL IN MEMORY" in database["detail"]
+    assert "paper account state" in database["detail"]
 
     # Same drift, other direction: the port had an implementation while the
     # registry still told clients it had none.

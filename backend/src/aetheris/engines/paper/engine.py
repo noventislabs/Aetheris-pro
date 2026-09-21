@@ -316,6 +316,39 @@ class PaperEngine:
     # Reading
     # ------------------------------------------------------------------
 
+    @property
+    def repository(self) -> PaperRepository:
+        """The store behind this engine, for startup wiring only.
+
+        Exposed so a durable store can be attached beside it without the
+        engine itself learning about databases. Nothing on the request path
+        reaches through this.
+        """
+        return self._repository
+
+    def state(self) -> PaperState:
+        """The live state, for a durable store to write down.
+
+        Read-only by convention: the caller serialises it and must not
+        mutate it. Returning the live object rather than a copy keeps the
+        write cheap, and every caller holds the service write lock, so
+        nothing else can be changing it at the same moment.
+        """
+        return self._repository.load()
+
+    def restore(self, state: PaperState) -> None:
+        """Adopt state read back from durable storage at startup.
+
+        Refused unless the repository supports whole-state replacement.
+        A store that cannot be replaced has nothing to restore into, and
+        pretending otherwise would leave the engine running on a fresh
+        account while reporting a restored one.
+        """
+        replace = getattr(self._repository, "replace", None)
+        if replace is None:  # pragma: no cover - only the in-memory store exists
+            raise TypeError("this repository cannot adopt a restored state")
+        replace(state)
+
     def reconcile(self, *, now: datetime) -> ReconciliationReport:
         """Ask the store whether local state agrees with an authority.
 

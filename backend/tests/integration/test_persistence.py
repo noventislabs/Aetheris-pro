@@ -546,8 +546,8 @@ from aetheris.core.config import Settings
 from aetheris.domain.enums import OrderSide, OrderState, OrderType, TradingMode
 from aetheris.domain.order import OrderIntent, OrderRecord
 
-owner_id, account_id, order_id, env_file = (
-    uuid.UUID(sys.argv[2]), uuid.UUID(sys.argv[3]), sys.argv[4], sys.argv[5]
+owner_id, account_id, order_id, client_order_id, env_file = (
+    uuid.UUID(sys.argv[2]), uuid.UUID(sys.argv[3]), sys.argv[4], sys.argv[5], sys.argv[6]
 )
 
 async def main() -> None:
@@ -560,11 +560,11 @@ async def main() -> None:
         await repo.add(
             OrderRecord(
                 order_id=order_id,
-                client_order_id="cid-restart",
+                client_order_id=client_order_id,
                 intent=OrderIntent(
                     account_id=str(account_id), symbol="ETHUSDT", side=OrderSide.BUY,
                     order_type=OrderType.MARKET, quantity=Decimal("2.25"),
-                    mode=TradingMode.PAPER, intent_key="manual:ETHUSDT:BUY:restart",
+                    mode=TradingMode.PAPER, intent_key=f"manual:ETHUSDT:BUY:{order_id}",
                     created_at=now,
                 ),
                 state=OrderState.SUBMITTED,
@@ -598,13 +598,23 @@ async def test_an_order_written_by_another_process_survives_into_this_one(
     script = tmp_path / "writer.py"
     script.write_text(WRITER, encoding="utf-8")
 
+    # Unique per run. ``orders.order_id`` is unique across the whole table,
+    # not per tenant, so a fixed literal lets this test pass exactly once per
+    # database: a run interrupted between the subprocess writing and the
+    # fixture cleaning up leaves a row that poisons every later run -- and
+    # under row-level security that row is invisible to anyone trying to work
+    # out why. The tenant was already unique; these now are too.
+    order_id = f"order-restart-{uuid.uuid4().hex[:12]}"
+    client_order_id = f"cid-restart-{uuid.uuid4().hex[:12]}"
+
     process = await asyncio.create_subprocess_exec(
         sys.executable,
         str(script),
         str(SRC),
         str(owner_id),
         str(account_id),
-        "order-restart",
+        order_id,
+        client_order_id,
         str(ENV_FILE),
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
@@ -615,9 +625,9 @@ async def test_an_order_written_by_another_process_survives_into_this_one(
     assert b"WROTE True" in stdout
 
     repo = _repo(factory, tenant)
-    recovered = await repo.get_by_client_order_id("cid-restart")
+    recovered = await repo.get_by_client_order_id(client_order_id)
     assert recovered is not None
-    assert recovered.order_id == "order-restart"
+    assert recovered.order_id == order_id
     assert recovered.state is OrderState.SUBMITTED
     assert recovered.intent.quantity == Decimal("2.25")
     # The crash signature the recovery protocol reads.

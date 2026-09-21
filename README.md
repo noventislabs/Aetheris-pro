@@ -14,9 +14,11 @@ Professional crypto trading and quantitative research platform.
 > refused by construction. **Live trading does not exist**: no adapter reports
 > `LIVE`, and the switch is double-gated and off.
 >
-> **Paper account state is still in-memory and resets on restart** — said on
-> every response, not buried here. Durable storage covers *order records*, not
-> the paper balance.
+> **Paper account state is durable when a database is configured** — balance,
+> positions, order log, trade history and the daily session are written after
+> every mutation and restored at startup. Without `DATABASE_URL` it reverts to
+> in-memory, and every response says which it is rather than leaving you to
+> assume.
 >
 > Ask the running service what it can do: `GET /api/v1/system/capabilities`.
 
@@ -216,10 +218,12 @@ These are enforced by code and tests, not by convention:
 
 These are real constraints of the current build, not opinions about it:
 
-- **Paper account state is in-memory.** Balance, positions, open paper orders,
-  the order log, trade history, the daily session and the emergency-stop flag
-  are held by `InMemoryPaperRepository` and are lost on restart. Durable
-  storage covers order records only.
+- **Paper durability is conditional.** With `DATABASE_URL` set, balance,
+  positions, the order log, trade history, the daily session and the
+  emergency-stop flag survive a restart. Without it they are in-memory and
+  lost, and a store whose last write failed reports `IN_MEMORY` rather than
+  continuing to promise durability. Two pieces are deliberately never
+  persisted: the per-symbol entry cooldown, and the autonomy arm state.
 - **Autonomy arm state is non-durable by design.** The loop starts disarmed on
   every process start, however it was left.
 - **REST polling only. There is no WebSocket anywhere** — not for market data,

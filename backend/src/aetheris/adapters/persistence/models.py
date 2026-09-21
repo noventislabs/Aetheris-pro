@@ -39,6 +39,7 @@ from sqlalchemy import (
     UniqueConstraint,
     text,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -271,3 +272,40 @@ class OrderDiscrepancyRow(Base):
     detail: Mapped[str] = mapped_column(Text, nullable=False)
     local_state: Mapped[str] = mapped_column(String(24), nullable=False)
     venue_state: Mapped[str | None] = mapped_column(String(24))
+
+
+class PaperSnapshotRow(Base):
+    """One paper account's whole state, as a single replaceable document.
+
+    Deliberately not a set of related tables. Order records earn typed columns
+    because they are evidence a venue might contradict and a recovery pass has
+    to query; paper state is simulation state this process owns outright, is
+    reset wholesale by ``POST /paper/reset``, and is never compared against an
+    outside authority. A dozen joined tables would buy query shapes nobody
+    needs and put a migration in front of every future engine field.
+
+    ``schema_version`` is stored as a column rather than left inside the
+    document so a mismatch is visible to a query, not only to the loader.
+
+    Money inside ``state`` crosses as **strings**, never JSON numbers: a JSON
+    number is a float to almost every reader, and a paper balance that drifts
+    by a cent per restart is a bug found months later and never explained.
+    """
+
+    __tablename__ = "paper_state_snapshots"
+    __table_args__ = (
+        UniqueConstraint("owner_id", "account_id", name="uq_paper_snapshot_owner_account"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    owner_id: Mapped[uuid.UUID] = mapped_column(
+        _UUID, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    account_id: Mapped[uuid.UUID] = mapped_column(
+        _UUID, ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    schema_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    state: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    updated_at: Mapped[dt.datetime] = mapped_column(
+        _TS, nullable=False, server_default=text("now()")
+    )

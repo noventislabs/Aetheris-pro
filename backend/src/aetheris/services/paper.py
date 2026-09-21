@@ -36,6 +36,7 @@ from decimal import Decimal
 from typing import Final
 
 from aetheris.adapters.exchange.errors import SymbolNotFoundError
+from aetheris.adapters.persistence.paper import PostgresPaperSnapshotStore
 from aetheris.analysis.indicators.prepare import prepare_candles
 from aetheris.analysis.volatility import (
     VolatilityMeasurement,
@@ -54,6 +55,7 @@ from aetheris.domain.leverage import (
 )
 from aetheris.domain.market import Symbol, Ticker
 from aetheris.domain.paper import (
+    Durability,
     PaperAccount,
     PaperExitReason,
     PaperOrderResult,
@@ -128,10 +130,71 @@ class PaperTradingService:
         #: service is built before it. ``None`` means no durable order records
         #: exist at all -- not that they exist and were not consulted.
         self._orders: OrderLifecycleEngine | None = None
+        #: The durable paper snapshot store, when one is configured. Bound
+        #: after construction for the same reason the order engine is.
+        #: ``None`` means paper state is in memory only, which the account
+        #: response reports rather than leaving the reader to assume.
+        self._snapshots: PostgresPaperSnapshotStore | None = None
 
     def bind_order_engine(self, engine: OrderLifecycleEngine | None) -> None:
         """Attach the durable order store once it is open."""
         self._orders = engine
+
+    def bind_snapshot_store(self, store: PostgresPaperSnapshotStore | None) -> None:
+        """Attach the durable paper store once the pool is open.
+
+        Also points the engine's repository at the store for its durability
+        answer. Without that the account response would keep reporting
+        IN_MEMORY while state was in fact being written down -- understating
+        the guarantee, which is the safe direction but still wrong.
+        """
+        self._snapshots = store
+        probe = getattr(self._engine.repository, "set_durability_probe", None)
+        if probe is not None:
+            probe(None if store is None else (lambda: store.durability))
+
+    @property
+    def durability(self) -> Durability:
+        """What the account response should claim about surviving a restart.
+
+        Delegates to the store rather than to configuration, because a
+        store whose last write failed is not durable whatever the config
+        says, and claiming otherwise is the one lie this must not tell.
+        """
+        if self._snapshots is None:
+            return Durability.IN_MEMORY
+        return self._snapshots.durability
+
+    async def _persist(self) -> None:
+        """Write the engine's state back, if there is somewhere to write it.
+
+        Always called with the write lock held, which is what makes it
+        safe: the lock already covers fetch-then-mutate on every path, so
+        a snapshot taken here cannot catch a half-applied mutation.
+
+        Never raises. The mutation has already happened and is correct in
+        memory; failing the caller's order because a write failed would
+        report a loss that did not occur. The store degrades to IN_MEMORY
+        and the account response stops promising durability.
+        """
+        if self._snapshots is None:
+            return
+        await self._snapshots.save(self._engine.state())
+
+    async def restore(self) -> bool:
+        """Seed the engine from the stored snapshot. Returns whether it did.
+
+        Called once at startup, before the service serves anything. A
+        false return is the normal first-run answer and is not a failure.
+        """
+        if self._snapshots is None:
+            return False
+        async with self._write_lock:
+            stored = await self._snapshots.load()
+            if stored is None:
+                return False
+            self._engine.restore(stored)
+            return True
 
     @property
     def engine(self) -> PaperEngine:
@@ -238,7 +301,9 @@ class PaperTradingService:
     async def tick(self) -> tuple[PaperAccount, tuple[PaperTrade, ...]]:
         """Run one position-management pass against fresh prices."""
         async with self._write_lock:
-            return self._engine.tick(now=utcnow(), marks=await self._open_marks())
+            outcome = self._engine.tick(now=utcnow(), marks=await self._open_marks())
+            await self._persist()
+            return outcome
 
     async def submit_order(
         self,
@@ -255,9 +320,11 @@ class PaperTradingService:
         no second leverage resolution and no path around this.
         """
         async with self._write_lock:
-            return await self._submit_locked(
+            result = await self._submit_locked(
                 request, requested_leverage=requested_leverage, origin=origin
             )
+            await self._persist()
+            return result
 
     async def _submit_locked(
         self,
@@ -484,9 +551,11 @@ class PaperTradingService:
             marks = await self._open_marks()
             key = symbol.upper()
             mark = marks.get(key) or await self._mark(key)
-            return self._engine.close_position(
+            result = self._engine.close_position(
                 key, now=utcnow(), mark=mark, reason=reason, marks=marks
             )
+            await self._persist()
+            return result
 
     async def reset(self, *, starting_balance: Decimal | None = None) -> PaperAccount:
         """Discard the account.
@@ -496,7 +565,9 @@ class PaperTradingService:
         fill land in an account that no longer exists.
         """
         async with self._write_lock:
-            return self._engine.reset(now=utcnow(), starting_balance=starting_balance)
+            account = self._engine.reset(now=utcnow(), starting_balance=starting_balance)
+            await self._persist()
+            return account
 
     async def set_emergency_stop(self, *, engaged: bool, reason: str) -> PaperAccount:
         """Block or unblock new entries.
@@ -505,7 +576,9 @@ class PaperTradingService:
         submission that is already past its own check.
         """
         async with self._write_lock:
-            return self._engine.set_emergency_stop(engaged=engaged, reason=reason, now=utcnow())
+            account = self._engine.set_emergency_stop(engaged=engaged, reason=reason, now=utcnow())
+            await self._persist()
+            return account
 
 
 def _unresolvable_leverage(detail: str) -> LeverageDecision:
