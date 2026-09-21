@@ -786,3 +786,100 @@ export interface TestnetStatus {
   margin_mode: string | null;
   observed_at: string | null;
 }
+
+
+// ---------------------------------------------------------------------------
+// Strategy setup scoring
+// ---------------------------------------------------------------------------
+
+export type SetupStatus =
+  | "ACTIONABLE"
+  | "NO_ACTIONABLE_SETUP"
+  | "INSUFFICIENT_DATA"
+  | "STALE"
+  | "UNAVAILABLE";
+
+export type SetupDirection = "LONG" | "SHORT" | "NO_SIGNAL";
+
+export type MarketRegimeName =
+  | "TREND_UP"
+  | "TREND_DOWN"
+  | "RANGE"
+  | "HIGH_VOLATILITY"
+  | "LOW_VOLATILITY"
+  | "UNKNOWN";
+
+export interface SetupScoreComponent {
+  name: string;
+  /** The measurement in its own units, or null when it could not be taken. */
+  raw_value: string | null;
+  normalized: string;
+  weight: string;
+  contribution: string;
+  detail: string;
+}
+
+export interface SetupScore {
+  value: string;
+  components: SetupScoreComponent[];
+  method: string;
+  /**
+   * The backend's own statement of what the number is not. Rendered rather
+   * than paraphrased: a 0-100 score is the single most misreadable thing on
+   * this screen, and a UI paraphrase is exactly where the caveat gets lost.
+   */
+  meaning: string;
+}
+
+export interface RiskReward {
+  entry_price: string;
+  stop_price: string;
+  take_profit_price: string;
+  risk_per_unit: string;
+  reward_per_unit: string;
+  risk_reward_ratio: string;
+  stop_model: string;
+  stop_distance_percent: string;
+  take_profit_r_multiple: string;
+  entry_basis: string;
+}
+
+export interface RegimeMeasurement {
+  name: string;
+  value: string | null;
+  threshold: string | null;
+  detail: string;
+}
+
+export interface RegimeAssessment {
+  regime: MarketRegimeName;
+  volatility_band: "HIGH" | "NORMAL" | "LOW" | "UNKNOWN";
+  measurements: RegimeMeasurement[];
+  reason: string;
+  method: string;
+  candles_used: number;
+}
+
+export interface TradeSetup {
+  symbol: string;
+  timeframe: Timeframe;
+  strategy: string;
+  strategy_version: string;
+  status: SetupStatus;
+  direction: SetupDirection;
+  /** Present only when ACTIONABLE. Absent is a real answer, not a zero. */
+  score: SetupScore | null;
+  risk_reward: RiskReward | null;
+  regime: RegimeAssessment | null;
+  conditions: ConditionOutcome[];
+  opposing_conditions: ConditionOutcome[];
+  detail: string;
+  indicators_used: string[];
+  candles_used: number;
+  last_candle_time: string | null;
+  data_source: string | null;
+  data_status: string | null;
+  data_age_seconds: number | null;
+  evaluated_at: string | null;
+  disclaimer: string;
+}

@@ -7,6 +7,7 @@ import { FreshnessBadge } from "@/components/Freshness";
 import { IndicatorSelector } from "@/components/IndicatorSelector";
 import { MarketHeader } from "@/components/MarketHeader";
 import { OscillatorPane } from "@/components/OscillatorPane";
+import { SetupPanel } from "@/components/SetupPanel";
 import { StrategyPanel } from "@/components/StrategyPanel";
 import { SymbolSearch } from "@/components/SymbolSearch";
 import {
@@ -14,6 +15,7 @@ import {
   getIndicators,
   getKlines,
   getMarketStatus,
+  getSetup,
   getStrategy,
   getTicker,
 } from "@/lib/api";
@@ -147,6 +149,15 @@ export default function MarketsPage() {
 
   const strategy = useApiResource(
     (signal) => getStrategy(symbol, timeframe, signal),
+    [symbol, timeframe],
+    { pollMs: STRATEGY_POLL_MS },
+  );
+
+  // Shares the strategy cadence rather than adding a faster one. A setup is
+  // derived from the same closed candles, so polling it more often would
+  // spend requests to re-read bars that have not changed.
+  const setup = useApiResource(
+    (signal) => getSetup(symbol, timeframe, signal),
     [symbol, timeframe],
     { pollMs: STRATEGY_POLL_MS },
   );
@@ -307,6 +318,18 @@ export default function MarketsPage() {
         </section>
       ) : (
         <StrategyPanel result={strategy.state.data} />
+      )}
+
+      {setup.state.kind === "loading" ? (
+        <section className="panel">
+          <LoadingState label="Scoring setup" />
+        </section>
+      ) : setup.state.kind === "error" ? (
+        <section className="panel">
+          <ErrorState error={setup.state.error} onRetry={setup.refresh} />
+        </section>
+      ) : (
+        <SetupPanel setup={setup.state.data} />
       )}
     </div>
   );

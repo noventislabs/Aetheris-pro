@@ -35,6 +35,7 @@ import type {
   SymbolListResponse,
   Ticker,
   Timeframe,
+  TradeSetup,
 } from "./types";
 
 export const API_BASE_URL =
@@ -295,6 +296,35 @@ function isStrategyResult(value: unknown): value is StrategyResult {
     hasString(value, "disclaimer") &&
     Array.isArray(value["long_conditions"]) &&
     Array.isArray(value["short_conditions"])
+  );
+}
+
+function isTradeSetup(value: unknown): value is TradeSetup {
+  return (
+    isRecord(value) &&
+    hasString(value, "status") &&
+    hasString(value, "direction") &&
+    hasString(value, "disclaimer") &&
+    Array.isArray(value["conditions"])
+  );
+}
+
+/**
+ * The scored setup for one instrument.
+ *
+ * Read-only, like every other analysis call. What comes back is a proposal
+ * the risk engine can still refuse, never an instruction.
+ */
+export function getSetup(
+  symbol: string,
+  timeframe: Timeframe,
+  signal?: AbortSignal,
+): Promise<TradeSetup> {
+  const params = new URLSearchParams({ timeframe, limit: "300" });
+  return request(
+    `/api/v1/analysis/${encodeURIComponent(symbol)}/setup?${params}`,
+    isTradeSetup,
+    signal,
   );
 }
 
