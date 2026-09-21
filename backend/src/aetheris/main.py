@@ -16,12 +16,22 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from aetheris import __version__
 from aetheris.adapters.exchange.binance.adapter import BinanceFuturesMarketDataAdapter
+from aetheris.adapters.persistence.accounts import PostgresAccountRepository
+from aetheris.adapters.persistence.engine import (
+    DatabaseUnavailableError,
+    build_engine,
+    build_session_factory,
+    check_connectivity,
+)
+from aetheris.adapters.persistence.orders import PostgresOrderRepository
 from aetheris.api.exception_handlers import register_exception_handlers
 from aetheris.api.middleware import RequestContextMiddleware, SecurityHeadersMiddleware
 from aetheris.api.v1.router import api_router
 from aetheris.core.config import Settings, get_settings
 from aetheris.core.freshness import utcnow
 from aetheris.core.logging import configure_logging, get_logger
+from aetheris.domain.enums import TradingMode
+from aetheris.engines.order.engine import OrderLifecycleEngine
 from aetheris.engines.paper.engine import PaperEngine, PaperEngineConfig
 from aetheris.engines.paper.store import InMemoryPaperRepository
 from aetheris.services.analysis import AnalysisService
@@ -34,10 +44,67 @@ from aetheris.services.scanner import ScannerService
 _log = get_logger("app")
 
 
+async def _open_order_store(app: FastAPI, settings: Settings) -> None:
+    """Attach durable order storage, or attach nothing and say so.
+
+    There is deliberately **no in-memory fallback here**. A development store
+    standing in for a database would make the application look healthy while
+    the one thing persistence exists for -- an order record surviving the
+    process that created it -- silently did not happen. Without a configured
+    database the order lifecycle is simply absent, readiness reports
+    ``NOT_CONFIGURED``, and nothing claims crash recovery.
+
+    An unreachable database is not fatal at startup either. ADR 0002 made the
+    database a remote service, so a connection that is down now and up in a
+    minute is an operational state; the pool stays, readiness reports
+    ``UNAVAILABLE``, and the process does not enter a restart loop over it.
+    """
+    app.state.db_engine = None
+    app.state.db_sessions = None
+    app.state.order_engine = None
+    app.state.order_account_id = None
+
+    if settings.database_url is None:
+        _log.info("database_not_configured", persistence="absent", crash_recovery=False)
+        return
+
+    engine = build_engine(settings)
+    app.state.db_engine = engine
+    reachable, detail = await check_connectivity(engine)
+    if not reachable:
+        _log.warning("database_unreachable", detail=detail, crash_recovery=False)
+        return
+
+    factory = build_session_factory(engine)
+    app.state.db_sessions = factory
+    try:
+        accounts = PostgresAccountRepository(factory)
+        owner_id = await accounts.ensure_owner()
+        account_id = await accounts.ensure_account(
+            owner_id=owner_id,
+            mode=TradingMode.PAPER,
+            starting_balance=settings.risk.paper_starting_balance,
+        )
+    except DatabaseUnavailableError as exc:
+        _log.warning("database_bootstrap_failed", detail=str(exc), crash_recovery=False)
+        return
+
+    repository = PostgresOrderRepository(factory, owner_id=owner_id, account_id=account_id)
+    app.state.order_engine = OrderLifecycleEngine(repository)
+    app.state.order_account_id = account_id
+    _log.info(
+        "database_ready",
+        detail=detail,
+        durable_orders=repository.durable,
+        crash_recovery=True,
+    )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings: Settings = app.state.settings
     loop: AutonomousLoop = app.state.autonomous_loop
+    await _open_order_store(app, settings)
     _log.info(
         "startup",
         version=__version__,
@@ -48,6 +115,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         autonomous_armed=loop.armed,
         autonomous_symbols=len(settings.autonomous.symbols),
         exchange=app.state.market_data_service.exchange_name,
+        durable_orders=app.state.order_engine is not None,
     )
     # Creating the task is not arming it. The loop idles until somebody calls
     # the arm endpoint, and starts disarmed on every boot however it was left.
@@ -59,6 +127,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # must stop before the connection pool it uses is closed underneath it.
         await loop.aclose()
         await app.state.market_data_service.aclose()
+        if app.state.db_engine is not None:
+            await app.state.db_engine.dispose()
         _log.info("shutdown")
 
 

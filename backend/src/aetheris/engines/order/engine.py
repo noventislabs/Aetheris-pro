@@ -66,7 +66,7 @@ class OrderLifecycleEngine:
     # Creation and the risk gate
     # ------------------------------------------------------------------
 
-    def create(self, intent: OrderIntent) -> OrderRecord:
+    async def create(self, intent: OrderIntent) -> OrderRecord:
         """Write the intent down before anything else happens.
 
         This is the record a crash in the uncertainty window leaves behind. It
@@ -83,18 +83,18 @@ class OrderLifecycleEngine:
             created_at=intent.created_at,
             updated_at=intent.created_at,
         )
-        return self._repository.add(record)
+        return await self._repository.add(record)
 
-    def mark_validating(self, order_id: str, *, now: datetime) -> OrderRecord:
+    async def mark_validating(self, order_id: str, *, now: datetime) -> OrderRecord:
         """Enter the risk gate. Submission is unreachable without passing here."""
-        return self._move(order_id, OrderState.VALIDATING, now=now)
+        return await self._move(order_id, OrderState.VALIDATING, now=now)
 
-    def mark_risk_rejected(
+    async def mark_risk_rejected(
         self, order_id: str, *, code: RiskRejectionCode, detail: str, now: datetime
     ) -> OrderRecord:
-        record = self._require(order_id)
+        record = await self._require(order_id)
         check_transition(record.state, OrderState.REJECTED, order_id=order_id)
-        return self._repository.update(
+        return await self._repository.update(
             record.model_copy(
                 update={
                     "state": OrderState.REJECTED,
@@ -106,9 +106,11 @@ class OrderLifecycleEngine:
             )
         )
 
-    def cancel_before_submission(self, order_id: str, *, reason: str, now: datetime) -> OrderRecord:
+    async def cancel_before_submission(
+        self, order_id: str, *, reason: str, now: datetime
+    ) -> OrderRecord:
         """Cancel something that never left. Always safe, by definition."""
-        record = self._require(order_id)
+        record = await self._require(order_id)
         if record.reached_venue:
             raise IllegalTransitionError(
                 f"{order_id} has already been submitted; cancelling it locally would "
@@ -116,7 +118,7 @@ class OrderLifecycleEngine:
                 "and reconcile instead."
             )
         check_transition(record.state, OrderState.CANCELLED, order_id=order_id)
-        return self._repository.update(
+        return await self._repository.update(
             record.model_copy(
                 update={
                     "state": OrderState.CANCELLED,
@@ -131,7 +133,7 @@ class OrderLifecycleEngine:
     # The uncertainty window
     # ------------------------------------------------------------------
 
-    def mark_submitting(self, order_id: str, *, now: datetime) -> OrderRecord:
+    async def mark_submitting(self, order_id: str, *, now: datetime) -> OrderRecord:
         """Stamp the record **before** the submission leaves.
 
         Called immediately before the network call, never after it. A record
@@ -141,9 +143,9 @@ class OrderLifecycleEngine:
         between safely resolving an order and accidentally duplicating a
         position.
         """
-        return self._move(order_id, OrderState.SUBMITTED, now=now, submitted_at=now)
+        return await self._move(order_id, OrderState.SUBMITTED, now=now, submitted_at=now)
 
-    def apply_venue_ack(
+    async def apply_venue_ack(
         self,
         order_id: str,
         *,
@@ -152,7 +154,7 @@ class OrderLifecycleEngine:
         now: datetime,
     ) -> OrderRecord:
         """Record what the venue said when it accepted or refused the order."""
-        record = self._require(order_id)
+        record = await self._require(order_id)
         check_transition(record.state, state, order_id=order_id)
         update: dict[str, object] = {
             "state": state,
@@ -161,17 +163,17 @@ class OrderLifecycleEngine:
         }
         if state.is_terminal:
             update["terminal_at"] = now
-        return self._repository.update(record.model_copy(update=update))
+        return await self._repository.update(record.model_copy(update=update))
 
-    def mark_unknown(self, order_id: str, *, reason: str, now: datetime) -> OrderRecord:
+    async def mark_unknown(self, order_id: str, *, reason: str, now: datetime) -> OrderRecord:
         """The honest state when the venue has not said.
 
         Not an error state. An order here is not lost -- it is unresolved, and
         the system keeps trading blocked until it is resolved by evidence.
         """
-        record = self._require(order_id)
+        record = await self._require(order_id)
         check_transition(record.state, OrderState.UNKNOWN, order_id=order_id)
-        return self._repository.update(
+        return await self._repository.update(
             record.model_copy(
                 update={
                     "state": OrderState.UNKNOWN,
@@ -185,7 +187,7 @@ class OrderLifecycleEngine:
     # Fills
     # ------------------------------------------------------------------
 
-    def apply_fill(self, order_id: str, fill: OrderFill, *, now: datetime) -> OrderRecord:
+    async def apply_fill(self, order_id: str, fill: OrderFill, *, now: datetime) -> OrderRecord:
         """Record an execution, or record why it could not be believed.
 
         A fill that would take the total backwards, or past the quantity
@@ -193,11 +195,11 @@ class OrderLifecycleEngine:
         order whose fills disagree with its own total cannot be reconciled
         against anything.
         """
-        record = self._require(order_id)
+        record = await self._require(order_id)
         new_total = record.filled_quantity + fill.quantity
 
         if new_total > record.intent.quantity:
-            return self._record_discrepancy(
+            return await self._record_discrepancy(
                 record,
                 detail=(
                     f"A fill of {fill.quantity} would take {order_id} to {new_total}, past "
@@ -225,21 +227,21 @@ class OrderLifecycleEngine:
         }
         if target.is_terminal:
             update["terminal_at"] = now
-        return self._repository.update(record.model_copy(update=update))
+        return await self._repository.update(record.model_copy(update=update))
 
     # ------------------------------------------------------------------
     # Reconciliation
     # ------------------------------------------------------------------
 
-    def begin_reconciliation(self, order_id: str, *, now: datetime) -> OrderRecord:
+    async def begin_reconciliation(self, order_id: str, *, now: datetime) -> OrderRecord:
         """Declare that this order is being asked about.
 
         The only exit from ``UNKNOWN``. Making it an explicit step is what
         stops an unknown order being resolved by anything other than an answer.
         """
-        record = self._require(order_id)
+        record = await self._require(order_id)
         check_transition(record.state, OrderState.RECONCILING, order_id=order_id)
-        return self._repository.update(
+        return await self._repository.update(
             record.model_copy(
                 update={
                     "state": OrderState.RECONCILING,
@@ -249,7 +251,7 @@ class OrderLifecycleEngine:
             )
         )
 
-    def reconcile(
+    async def reconcile(
         self,
         order_id: str,
         venue_view: VenueOrderView | None,
@@ -257,24 +259,32 @@ class OrderLifecycleEngine:
         venue_reachable: bool,
         now: datetime,
     ) -> tuple[OrderRecord, ReconciliationDecision]:
-        """Ask about one order and apply whatever the answer permits."""
-        record = self._require(order_id)
-        decision = decide(record, venue_view, venue_reachable=venue_reachable)
-        return self.apply_reconciliation(order_id, decision, now=now), decision
+        """Ask about one order and apply whatever the answer permits.
 
-    def apply_reconciliation(
+        Single-flight: the order is held for the read-decide-write sequence, so
+        a second pass running concurrently waits rather than reaching its own
+        conclusion about the same order. Two passes that both read ``UNKNOWN``
+        and disagree would otherwise resolve by whichever wrote last, silently.
+        """
+        async with self._repository.locked(order_id) as held:
+            if held is None:
+                raise KeyError(f"No order {order_id}")
+            decision = decide(held, venue_view, venue_reachable=venue_reachable)
+            return await self.apply_reconciliation(order_id, decision, now=now), decision
+
+    async def apply_reconciliation(
         self, order_id: str, decision: ReconciliationDecision, *, now: datetime
     ) -> OrderRecord:
         """Apply a decision. The single auditable step that changes state."""
-        record = self._require(order_id)
+        record = await self._require(order_id)
 
         if decision.action is ReconciliationAction.RECORD_DISCREPANCY:
-            return self._record_discrepancy(
+            return await self._record_discrepancy(
                 record, detail=decision.discrepancy or decision.detail, now=now
             )
 
         if decision.action is ReconciliationAction.VENUE_UNREACHABLE:
-            return self._repository.update(
+            return await self._repository.update(
                 record.model_copy(
                     update={
                         "reconciliation_detail": decision.detail,
@@ -292,7 +302,7 @@ class OrderLifecycleEngine:
             # REMAIN_UNKNOWN on an order already UNKNOWN. Nothing moves; the
             # attempt and its reason are still recorded, because a rising
             # attempt count with no resolution is itself worth seeing.
-            return self._repository.update(
+            return await self._repository.update(
                 record.model_copy(
                     update={
                         "reconciliation_detail": decision.detail,
@@ -326,9 +336,9 @@ class OrderLifecycleEngine:
             update["average_fill_price"] = decision.average_fill_price
         if target.is_terminal:
             update["terminal_at"] = now
-        return self._repository.update(record.model_copy(update=update))
+        return await self._repository.update(record.model_copy(update=update))
 
-    def resolve_manually(
+    async def resolve_manually(
         self,
         order_id: str,
         *,
@@ -348,7 +358,7 @@ class OrderLifecycleEngine:
         who did it and why -- a manual resolution that left no trace would be
         indistinguishable from the inference this whole design forbids.
         """
-        record = self._require(order_id)
+        record = await self._require(order_id)
         if not record.is_unreconciled:
             raise IllegalTransitionError(
                 f"{order_id} is {record.state.value}, not awaiting reconciliation. Manual "
@@ -356,7 +366,7 @@ class OrderLifecycleEngine:
                 "move an order that is progressing normally."
             )
         if record.state is OrderState.UNKNOWN:
-            record = self.begin_reconciliation(order_id, now=now)
+            record = await self.begin_reconciliation(order_id, now=now)
         check_transition(record.state, to_state, order_id=order_id)
         update: dict[str, object] = {
             "state": to_state,
@@ -370,14 +380,14 @@ class OrderLifecycleEngine:
         }
         if to_state.is_terminal:
             update["terminal_at"] = now
-        return self._repository.update(record.model_copy(update=update))
+        return await self._repository.update(record.model_copy(update=update))
 
     # ------------------------------------------------------------------
     # What the risk engine asks
     # ------------------------------------------------------------------
 
-    def bookkeeping(self) -> OrderBookkeeping:
-        records = self._repository.all_records()
+    async def bookkeeping(self) -> OrderBookkeeping:
+        records = await self._repository.all_records()
         return OrderBookkeeping(
             total=len(records),
             open_orders=sum(1 for r in records if r.state.is_open),
@@ -386,32 +396,32 @@ class OrderLifecycleEngine:
             discrepancies=sum(len(r.discrepancies) for r in records),
         )
 
-    def unreconciled_orders(self) -> tuple[OrderRecord, ...]:
-        return blocking_orders(self._repository.all_records())
+    async def unreconciled_orders(self) -> tuple[OrderRecord, ...]:
+        return blocking_orders(await self._repository.all_records())
 
-    def blocking_detail(self) -> str:
-        return summarise(self._repository.all_records())
+    async def blocking_detail(self) -> str:
+        return summarise(await self._repository.all_records())
 
-    def orders_needing_reconciliation(self) -> tuple[OrderRecord, ...]:
+    async def orders_needing_reconciliation(self) -> tuple[OrderRecord, ...]:
         """Every non-terminal order -- what a recovery pass must ask about.
 
         Not only the explicitly unknown ones: an order believed ``ACCEPTED``
         may have filled while the process was down, and assuming otherwise is
         the same error as assuming an unknown order never landed.
         """
-        return self._repository.open_records()
+        return await self._repository.open_records()
 
     # ------------------------------------------------------------------
     # Internals
     # ------------------------------------------------------------------
 
-    def _require(self, order_id: str) -> OrderRecord:
-        record = self._repository.get(order_id)
+    async def _require(self, order_id: str) -> OrderRecord:
+        record = await self._repository.get(order_id)
         if record is None:
             raise KeyError(f"No order {order_id}")
         return record
 
-    def _move(
+    async def _move(
         self,
         order_id: str,
         target: OrderState,
@@ -419,20 +429,20 @@ class OrderLifecycleEngine:
         now: datetime,
         submitted_at: datetime | None = None,
     ) -> OrderRecord:
-        record = self._require(order_id)
+        record = await self._require(order_id)
         check_transition(record.state, target, order_id=order_id)
         update: dict[str, object] = {"state": target, "updated_at": now}
         if submitted_at is not None:
             update["submitted_at"] = submitted_at
         if target.is_terminal:
             update["terminal_at"] = now
-        return self._repository.update(record.model_copy(update=update))
+        return await self._repository.update(record.model_copy(update=update))
 
-    def _record_discrepancy(
+    async def _record_discrepancy(
         self, record: OrderRecord, *, detail: str, now: datetime
     ) -> OrderRecord:
         discrepancy = OrderDiscrepancy(observed_at=now, detail=detail, local_state=record.state)
-        return self._repository.update(
+        return await self._repository.update(
             record.model_copy(
                 update={
                     "discrepancies": (*record.discrepancies, discrepancy),

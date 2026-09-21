@@ -206,18 +206,48 @@ Three gaps the 8a review left open on purpose, each needing a durable home:
 
 ## 9. Definition of done for the dependency
 
-Phase 8b may begin when all of these hold:
+Phase 8b may begin when all of these hold. Status after phase 1, verified
+against the provisioned PostgreSQL 17.6 rather than asserted:
 
-- [ ] `DATABASE_URL` provisioned and reachable *(needs the maintainer)*
-- [ ] Alembic configured; migrations run clean from empty
-- [ ] `accounts`, `orders`, `order_fills`, `order_discrepancies` exist
-- [ ] Money is `NUMERIC`, time is `timestamptz`, verified by a round-trip test
-- [ ] `UNIQUE (account_id, client_order_id)` enforced **by the database**
-- [ ] `SELECT … FOR UPDATE` available and used for reconciliation
-- [ ] `owner_id` on every user-facing table; repositories filter on it
-- [ ] Authentication issues a session that resolves to exactly one owner
-- [ ] A cross-tenant read test exists and passes
-- [ ] Connection failure is an operational state, not an exception that escapes
+- [x] `DATABASE_URL` provisioned and reachable
+- [x] Alembic configured; migrations run clean from empty, and reverse
+- [x] `users`, `accounts`, `orders`, `order_fills`, `order_discrepancies` exist
+- [x] Money is `NUMERIC(24,8)`, time is `timestamptz`, verified by round-trip tests
+- [x] `UNIQUE (account_id, client_order_id)` enforced **by the database**
+- [x] `SELECT … FOR UPDATE` available and used for reconciliation
+- [x] `owner_id` on every user-facing table; repositories filter on it
+- [ ] **Authentication issues a session that resolves to exactly one owner**
+- [x] A cross-tenant read test exists and passes
+- [x] Connection failure is an operational state, not an exception that escapes
+
+**The one open item is authentication, and it is open on purpose.** The
+isolation *mechanism* is built and enforced by the database: row-level
+security, forced, on a runtime role without `BYPASSRLS`, keyed to a
+transaction-local GUC. What does not exist yet is a login that decides which
+owner that GUC should hold. Until it does, the application resolves a single
+bootstrap owner server-side, which preserves phase 6's property exactly -- no
+request names or selects an account, so there is no identifier with which to
+ask for someone else's.
+
+There is a specific consequence worth recording before someone meets it while
+writing login: the `users` policy scopes rows to `id = current_setting(...)`,
+so the runtime role **cannot look a user up by email**. It can only confirm the
+owner it already names. Authentication therefore needs a lookup the runtime
+role is deliberately not allowed to make -- a `SECURITY DEFINER` function or a
+second, narrowly-scoped policy. Either is a deliberate hole in the wall and
+belongs in the change that introduces login, argued on its own terms.
+
+## 10. What phase 1 did not make durable
+
+`orders`, `order_fills` and `order_discrepancies` are durable. **Paper account
+state -- the balance, open positions, the trade log -- is still in memory** and
+still reports `Durability.IN_MEMORY`, because §2 never specified a table for it
+and inventing one would have changed phase 6 execution semantics under the
+cover of a database migration.
+
+So crash recovery is a real guarantee for the order lifecycle and is not
+claimed for the paper simulation. A restart loses the simulated balance, as it
+always did, and the API goes on saying so on every response.
 
 Until every box is ticked, `order.engine` stays `PARTIAL` and crash recovery
 stays unclaimed.

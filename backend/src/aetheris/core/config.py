@@ -362,8 +362,34 @@ class Settings(BaseSettings):
     )
 
     # --- Secrets: no defaults, never logged --------------------------------
+    #: The **runtime** connection, used by every request. It must name the
+    #: restricted application role, not the schema owner: the owner carries
+    #: BYPASSRLS on a managed PostgreSQL, and a connection that bypasses
+    #: row-level security turns every tenant policy into decoration.
     database_url: SecretStr | None = None
+    #: The **migration** connection, used by Alembic and by nothing else. It
+    #: names the schema owner. Kept separate so the privilege needed to create
+    #: a table is not also present while serving a request.
+    database_migration_url: SecretStr | None = None
     secret_key: SecretStr | None = None
+
+    # --- Database pool: small on purpose ----------------------------------
+    #: The hosted tier allows few connections and this is one process. A pool
+    #: larger than the server's ceiling fails at the worst moment rather than
+    #: at startup.
+    database_pool_size: int = Field(default=5, ge=1, le=20)
+    database_pool_max_overflow: int = Field(default=2, ge=0, le=10)
+    database_pool_timeout_seconds: float = Field(default=10.0, gt=0)
+    database_connect_timeout_seconds: float = Field(default=10.0, gt=0)
+    #: A ceiling on any single statement. Without one, a lock wait can sit
+    #: until the server's own timeout, holding a row that reconciliation needs.
+    database_statement_timeout_seconds: float = Field(default=20.0, gt=0)
+    #: Path to the certificate authority to verify the database server against.
+    #: Required only when the URL asks for ``sslmode=verify-ca`` or
+    #: ``verify-full``; without one those modes refuse to connect rather than
+    #: quietly settling for an unverified channel. Not a secret -- a public
+    #: certificate -- so it is a path, not a ``SecretStr``.
+    database_ssl_root_cert: str | None = None
 
     risk: RiskSettings = Field(default_factory=RiskSettings)
     binance: BinanceFuturesSettings = Field(default_factory=BinanceFuturesSettings)
@@ -387,6 +413,31 @@ class Settings(BaseSettings):
                 "live_trading_enabled requires live_activation_acknowledged=true; "
                 "live trading cannot be enabled by a single flag"
             )
+        return self
+
+    @model_validator(mode="after")
+    def _database_urls_are_postgresql(self) -> Self:
+        """Reject anything that is not PostgreSQL, at startup.
+
+        ADR 0002 rejected SQLite because the three things it diverges on --
+        ``NUMERIC`` semantics, ``timestamptz`` and ``SELECT ... FOR UPDATE`` --
+        are the three things the order engine depends on. Divergence would be
+        discovered in the code that handles real orders. Checking the scheme
+        here means a substituted database fails on the first boot rather than
+        during a reconciliation.
+        """
+        for name in ("database_url", "database_migration_url"):
+            secret: SecretStr | None = getattr(self, name)
+            if secret is None:
+                continue
+            scheme = secret.get_secret_value().partition("://")[0].partition("+")[0].lower()
+            if scheme != "postgresql":
+                # The scheme is not a credential; the rest of the URL is, and
+                # is never named here.
+                raise ValueError(
+                    f"{name} must be a postgresql:// URL; got scheme {scheme!r}. "
+                    "PostgreSQL is required by ADR 0002 and is not substitutable."
+                )
         return self
 
     @model_validator(mode="after")

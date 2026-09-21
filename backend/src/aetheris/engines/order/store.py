@@ -8,19 +8,28 @@ class rather than a rewrite of the engine.
 sharper point than it was for paper.** Paper state that vanishes on restart
 loses a simulation. Order state that vanishes on restart loses the record of
 something that may exist at a venue -- which is precisely the record recovery
-depends on. So this implementation reports ``durable = False``, and phase 8a
-deliberately does **not** claim crash recovery: the protocol is built and
-tested here, and only becomes a real guarantee when phase 8b puts it on
-PostgreSQL.
+depends on. So this implementation reports ``durable = False``: it remains the
+development store, and nothing that reports ``False`` may claim crash recovery.
+The durable implementation lives in ``adapters.persistence``.
+
+**The port is async.** Every method awaits, because the durable implementation
+is a network round-trip and a synchronous call would block the event loop for
+its latency on every order. The in-memory store gains nothing from this and
+pays nothing for it; the shape exists so that swapping the implementation is a
+composition change rather than a rewrite of every caller.
 """
 
 from __future__ import annotations
 
+import asyncio
 from abc import ABC, abstractmethod
+from collections import defaultdict
+from collections.abc import AsyncIterator
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 
 from aetheris.domain.order import OrderRecord
 
-__all__ = ["InMemoryOrderRepository", "OrderRepository"]
+__all__ = ["DuplicateClientOrderIdError", "InMemoryOrderRepository", "OrderRepository"]
 
 
 class OrderRepository(ABC):
@@ -43,29 +52,44 @@ class OrderRepository(ABC):
         """
 
     @abstractmethod
-    def add(self, record: OrderRecord) -> OrderRecord:
+    async def add(self, record: OrderRecord) -> OrderRecord:
         """Store a new record. Must reject a duplicate client order id."""
 
     @abstractmethod
-    def update(self, record: OrderRecord) -> OrderRecord:
+    async def update(self, record: OrderRecord) -> OrderRecord:
         """Replace an existing record."""
 
     @abstractmethod
-    def get(self, order_id: str) -> OrderRecord | None: ...
+    async def get(self, order_id: str) -> OrderRecord | None: ...
 
     @abstractmethod
-    def get_by_client_order_id(self, client_order_id: str) -> OrderRecord | None:
+    def locked(self, order_id: str) -> AbstractAsyncContextManager[OrderRecord | None]:
+        """Hold one order for the duration of a block, excluding other workers.
+
+        This is what makes reconciliation single-flight. Without it two passes
+        can both read ``UNKNOWN``, both ask the venue, and both apply a
+        conclusion -- and if they disagree, the last writer wins silently.
+
+        One order, not a global lock: a global lock would serialise every order
+        behind the slowest reconciliation. The durable implementation is
+        ``SELECT ... FOR UPDATE`` inside one transaction, which serialises
+        across processes; see ``InMemoryOrderRepository.locked`` for what an
+        in-process store can and cannot promise.
+        """
+
+    @abstractmethod
+    async def get_by_client_order_id(self, client_order_id: str) -> OrderRecord | None:
         """The lookup recovery uses. This is why identity must be derivable."""
 
     @abstractmethod
-    def all_records(self) -> tuple[OrderRecord, ...]: ...
+    async def all_records(self) -> tuple[OrderRecord, ...]: ...
 
     @abstractmethod
-    def open_records(self) -> tuple[OrderRecord, ...]:
+    async def open_records(self) -> tuple[OrderRecord, ...]:
         """Every non-terminal record -- the set a recovery pass must ask about."""
 
     @abstractmethod
-    def clear(self) -> None:
+    async def clear(self) -> None:
         """Discard everything. Development and tests only."""
 
 
@@ -84,12 +108,13 @@ class InMemoryOrderRepository(OrderRepository):
     def __init__(self) -> None:
         self._by_order_id: dict[str, OrderRecord] = {}
         self._by_client_id: dict[str, str] = {}
+        self._locks: defaultdict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
 
     @property
     def durable(self) -> bool:
         return False
 
-    def add(self, record: OrderRecord) -> OrderRecord:
+    async def add(self, record: OrderRecord) -> OrderRecord:
         if record.client_order_id in self._by_client_id:
             raise DuplicateClientOrderIdError(
                 f"An order with client id {record.client_order_id} already exists. "
@@ -101,25 +126,39 @@ class InMemoryOrderRepository(OrderRepository):
         self._by_client_id[record.client_order_id] = record.order_id
         return record
 
-    def update(self, record: OrderRecord) -> OrderRecord:
+    async def update(self, record: OrderRecord) -> OrderRecord:
         if record.order_id not in self._by_order_id:
             raise KeyError(f"No order {record.order_id} to update")
         self._by_order_id[record.order_id] = record
         return record
 
-    def get(self, order_id: str) -> OrderRecord | None:
+    async def get(self, order_id: str) -> OrderRecord | None:
         return self._by_order_id.get(order_id)
 
-    def get_by_client_order_id(self, client_order_id: str) -> OrderRecord | None:
+    async def get_by_client_order_id(self, client_order_id: str) -> OrderRecord | None:
         order_id = self._by_client_id.get(client_order_id)
         return self._by_order_id.get(order_id) if order_id else None
 
-    def all_records(self) -> tuple[OrderRecord, ...]:
+    async def all_records(self) -> tuple[OrderRecord, ...]:
         return tuple(self._by_order_id.values())
 
-    def open_records(self) -> tuple[OrderRecord, ...]:
+    async def open_records(self) -> tuple[OrderRecord, ...]:
         return tuple(r for r in self._by_order_id.values() if not r.is_terminal)
 
-    def clear(self) -> None:
+    @asynccontextmanager
+    async def locked(self, order_id: str) -> AsyncIterator[OrderRecord | None]:
+        """Serialise within this process only.
+
+        An ``asyncio.Lock`` excludes two coroutines in one interpreter. It does
+        not exclude a second process, which is exactly the case phase 8b's
+        recovery pass creates. That gap is not closed by trying harder here --
+        it is closed by a row lock in a database, and this store reports
+        ``durable = False`` for the same reason.
+        """
+        async with self._locks[order_id]:
+            yield self._by_order_id.get(order_id)
+
+    async def clear(self) -> None:
         self._by_order_id.clear()
         self._by_client_id.clear()
+        self._locks.clear()

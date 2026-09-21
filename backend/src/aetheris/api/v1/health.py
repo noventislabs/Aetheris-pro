@@ -10,10 +10,11 @@ from __future__ import annotations
 
 from enum import StrEnum
 
-from fastapi import APIRouter, Response
+from fastapi import APIRouter, Request, Response
 from pydantic import BaseModel
 
 from aetheris import __version__
+from aetheris.adapters.persistence.engine import check_connectivity
 from aetheris.core.config import Settings, get_settings
 from aetheris.core.freshness import utcnow
 
@@ -44,7 +45,41 @@ class ReadinessResponse(BaseModel):
     components: list[ComponentHealth]
 
 
-def _check_components(settings: Settings) -> list[ComponentHealth]:
+async def _database_health(settings: Settings, engine: object | None) -> ComponentHealth:
+    """Actually connect, rather than reporting on whether a string is set.
+
+    Three outcomes, and the difference between the last two is the whole point
+    of reporting at all:
+
+    - ``NOT_CONFIGURED`` -- no URL. We never had a database.
+    - ``OK`` -- a connection was opened and answered this instant.
+    - ``UNAVAILABLE`` -- configured and unreachable. We had it and lost it,
+      which is the only one of the three that is an incident.
+
+    The detail names the failure class and never the connection string: this
+    body is served to a browser.
+    """
+    if settings.database_url is None:
+        return ComponentHealth(
+            name="database",
+            status=ComponentStatus.NOT_CONFIGURED,
+            detail="No database configured; set AETHERIS_DATABASE_URL to enable persistence.",
+        )
+    if engine is None:
+        return ComponentHealth(
+            name="database",
+            status=ComponentStatus.UNAVAILABLE,
+            detail="Database configured but the connection pool failed to start.",
+        )
+    reachable, detail = await check_connectivity(engine)  # type: ignore[arg-type]
+    return ComponentHealth(
+        name="database",
+        status=ComponentStatus.OK if reachable else ComponentStatus.UNAVAILABLE,
+        detail=detail,
+    )
+
+
+def _check_components(settings: Settings, database: ComponentHealth) -> list[ComponentHealth]:
     """Report each dependency truthfully, including the ones not yet built.
 
     NOT_CONFIGURED is distinct from UNAVAILABLE: the first means we never had
@@ -56,19 +91,7 @@ def _check_components(settings: Settings) -> list[ComponentHealth]:
             status=ComponentStatus.OK,
             detail="Application is serving requests.",
         ),
-        ComponentHealth(
-            name="database",
-            status=(
-                ComponentStatus.NOT_CONFIGURED
-                if settings.database_url is None
-                else ComponentStatus.UNAVAILABLE
-            ),
-            detail=(
-                "No database configured; persistence lands in phase 1."
-                if settings.database_url is None
-                else "Database configured but connectivity checks are not implemented yet."
-            ),
-        ),
+        database,
         ComponentHealth(
             name="exchange",
             status=ComponentStatus.NOT_CONFIGURED,
@@ -88,9 +111,10 @@ async def liveness() -> LivenessResponse:
 
 
 @router.get("/health/ready", response_model=ReadinessResponse, summary="Readiness probe")
-async def readiness(response: Response) -> ReadinessResponse:
-    settings = get_settings()
-    components = _check_components(settings)
+async def readiness(request: Request, response: Response) -> ReadinessResponse:
+    settings = getattr(request.app.state, "settings", None) or get_settings()
+    database = await _database_health(settings, getattr(request.app.state, "db_engine", None))
+    components = _check_components(settings, database)
     # Phase 0 serves analysis-free endpoints only, so an unbuilt dependency
     # must not report the service as ready-for-trading. It is ready to serve
     # what exists; UNAVAILABLE (a real failure) is what blocks readiness.
