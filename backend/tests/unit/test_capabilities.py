@@ -32,7 +32,6 @@ def test_real_execution_capabilities_are_not_claimed_in_this_build() -> None:
     reaches a venue is not.
     """
     for key in (
-        "order.persistence",
         "execution.testnet",
         "execution.live",
         "falcon.command_center",
@@ -45,18 +44,48 @@ def test_real_execution_capabilities_are_not_claimed_in_this_build() -> None:
         )
 
 
-def test_the_order_engine_does_not_claim_crash_recovery() -> None:
-    """Phase 8a built the protocol. The guarantee needs 8b's durable store.
+def test_durable_order_records_are_storage_and_do_not_imply_execution() -> None:
+    """``order.persistence`` left the list above when records became durable.
 
-    Claiming recovery over in-memory records would be the sharpest untruth this
-    registry could tell: the thing a recovery pass queries is exactly the thing
-    a restart destroys.
+    It was never an execution capability -- storing an order moves no money --
+    but it sat in that list because nothing had been built. Now that something
+    has, it needs its own boundary: delivered as storage, and still not a claim
+    that anything can be sent anywhere.
+    """
+    persistence = get_capability("order.persistence")
+    assert persistence is not None
+    assert persistence.status is CapabilityStatus.PARTIAL
+    assert persistence.status is not CapabilityStatus.AVAILABLE
+    assert "PostgreSQL" in persistence.detail
+    # Storage must not be read as a venue claim, and must not be read as paper
+    # durability either. Asserted as the disclaimers being present rather than
+    # as words being absent: the honest text has to *mention* submission in
+    # order to deny it, so banning the word would push the entry towards saying
+    # less about its own limits.
+    assert "still in memory" in persistence.detail
+    assert "nothing submits" in persistence.detail
+
+
+def test_the_order_engine_claims_recovery_only_for_what_is_actually_durable() -> None:
+    """The claim changed when the implementation did, and no further.
+
+    Phase 8a originally had to say crash recovery was NOT delivered, because
+    records were in-memory: the thing a recovery pass queries was exactly the
+    thing a restart destroyed. Records are durable now and a recovery pass runs
+    at startup, so that sentence would itself be the untruth.
+
+    What must stay true is the boundary. Recovery *states* the uncertainty by
+    moving interrupted orders to UNKNOWN; it does not resolve it, because
+    resolving needs venue evidence and there is still no venue. And the paper
+    account is not covered by any of it.
     """
     engine = get_capability("order.engine")
     assert engine is not None
     assert engine.status is CapabilityStatus.PARTIAL
-    assert "Crash recovery is NOT delivered" in engine.detail
     assert "NO venue" in engine.detail
+    assert "does not resolve it" in engine.detail
+    assert "in-memory" in engine.detail  # the paper account, named explicitly
+    assert "Paper account state is separate" in engine.detail
 
 
 def test_autonomous_trading_states_that_it_is_off_by_default() -> None:

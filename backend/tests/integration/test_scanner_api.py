@@ -269,7 +269,10 @@ def test_capabilities_report_the_scanner_as_available(client: TestClient) -> Non
     assert by_key["analysis.indicators"]["status"] == "AVAILABLE"
     assert by_key["analysis.smc"]["status"] == "PLANNED"
     assert by_key["ai.analysis"]["status"] == "PLANNED"
-    assert by_key["order.persistence"]["status"] == "PLANNED"
+    # PARTIAL since phase 8a: records are durable in PostgreSQL and a recovery
+    # pass runs at startup. Still not AVAILABLE -- nothing submits anywhere.
+    assert by_key["order.persistence"]["status"] == "PARTIAL"
+    assert by_key["execution.testnet"]["status"] == "PLANNED"
 
 
 def test_scanner_exposes_no_write_route(client: TestClient) -> None:

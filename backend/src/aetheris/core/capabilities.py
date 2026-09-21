@@ -296,21 +296,31 @@ CAPABILITIES: tuple[Capability, ...] = (
         detail=(
             "Phase 8a: the order state machine, deterministic identity and the "
             "reconciliation protocol are built and tested. UNKNOWN can only be resolved "
-            "through RECONCILING, and never by inference. Reaches NO venue -- nothing "
-            "implements the trading port. **Crash recovery is NOT delivered**: records "
-            "are in-memory, so a restart loses the record a recovery pass would query. "
-            "That needs the durable store in phase 8b."
+            "through RECONCILING, and never by inference. Records are durable in "
+            "PostgreSQL and a recovery pass runs at startup: orders that were in flight "
+            "when the process stopped are moved to UNKNOWN, orders that never left are "
+            "left alone, and orders that cannot be read are recorded as discrepancies "
+            "and block new entries. Recovery **states the uncertainty; it does not "
+            "resolve it** -- resolving needs venue evidence, and this reaches NO venue: "
+            "nothing implements the trading port. Paper account state is separate and "
+            "is still in-memory."
         ),
     ),
     Capability(
         key="order.persistence",
         name="Durable order records",
-        status=CapabilityStatus.PLANNED,
+        status=CapabilityStatus.PARTIAL,
         phase=8,
         detail=(
-            "Order records that survive a restart, which is what turns the "
-            "reconciliation protocol into an actual crash-recovery guarantee. Needs the "
-            "PostgreSQL foundation from phase 1."
+            "Orders, fills and discrepancies are stored in PostgreSQL with NUMERIC(24,8) "
+            "money and timestamptz time, behind row-level security. Identity is unique by "
+            "database constraint, reconciliation holds a row lock for the whole "
+            "read-decide-write, and a retry after a restart replays the persisted order "
+            "instead of creating a second one. Applies to order records only: the paper "
+            "account balance and positions are still in memory and say so. PARTIAL, not "
+            "AVAILABLE: the submission-retry state a venue path needs "
+            "(submission_attempts, next_retry_at) has columns but nothing writes them "
+            "yet, because nothing submits."
         ),
     ),
     Capability(

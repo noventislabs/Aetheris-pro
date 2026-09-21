@@ -60,6 +60,7 @@ from aetheris.domain.paper import (
     PaperTrade,
     ReconciliationReport,
 )
+from aetheris.engines.order.engine import OrderLifecycleEngine, ReconciliationPending
 from aetheris.engines.paper.engine import (
     MarkPrice,
     PaperEngine,
@@ -122,6 +123,15 @@ class PaperTradingService:
         #: other piece of paper state; a restart forgets it, which is the
         #: permissive direction and is disclosed rather than hidden.
         self._last_entry_at: dict[str, datetime] = {}
+        #: The durable order store, when one is configured. Bound after
+        #: construction because the pool is opened during startup, while this
+        #: service is built before it. ``None`` means no durable order records
+        #: exist at all -- not that they exist and were not consulted.
+        self._orders: OrderLifecycleEngine | None = None
+
+    def bind_order_engine(self, engine: OrderLifecycleEngine | None) -> None:
+        """Attach the durable order store once it is open."""
+        self._orders = engine
 
     @property
     def engine(self) -> PaperEngine:
@@ -134,6 +144,31 @@ class PaperTradingService:
     # ------------------------------------------------------------------
     # Prices
     # ------------------------------------------------------------------
+
+    async def _reconciliation_pending(self) -> ReconciliationPending:
+        """How many durable orders forbid a new entry.
+
+        Three outcomes, and the third is the one that matters:
+
+        - No durable store configured: no order records exist anywhere, so
+          nothing can be unreconciled. Zero is a fact here, not an assumption.
+        - The store answers: use its count.
+        - The store is configured and cannot be read: **fail closed.** A store
+          that exists and will not answer may be holding an order that reached
+          a venue, and treating an unanswerable question as "nothing pending"
+          is precisely the silent failure phase 8a exists to prevent.
+        """
+        if self._orders is None:
+            return ReconciliationPending(0, "No durable order store is configured.")
+        try:
+            return await self._orders.reconciliation_pending()
+        except Exception:  # any failure here must block, not pass
+            return ReconciliationPending(
+                1,
+                "The durable order store could not be read, so whether an order is "
+                "awaiting reconciliation is unknown. No new entry is permitted until "
+                "it can be checked.",
+            )
 
     async def _mark(self, symbol: str) -> MarkPrice:
         """Fetch one price, turning an upstream failure into an unusable mark.
@@ -273,6 +308,7 @@ class PaperTradingService:
         mark = marks.get(symbol) or await self._mark(symbol)
         volatility = await self._measure_volatility(symbol, now)
         account = self._engine.snapshot(now=now, marks=marks)
+        pending = await self._reconciliation_pending()
 
         # THE RISK AUTHORITY. Every order, whatever proposed it.
         verdict = risk_evaluate(
@@ -286,7 +322,7 @@ class PaperTradingService:
                 trailing_stop_percent=request.trailing_stop_percent,
                 origin=origin,
             ),
-            account=self._account_view(account, symbol),
+            account=self._account_view(account, symbol, pending),
             market=RiskMarketView(
                 symbol=symbol,
                 status=mark.status,
@@ -413,7 +449,9 @@ class PaperTradingService:
             max_atr_percent=self._settings.autonomous.max_atr_percent,
         )
 
-    def _account_view(self, account: PaperAccount, symbol: str) -> RiskAccountView:
+    def _account_view(
+        self, account: PaperAccount, symbol: str, pending: ReconciliationPending
+    ) -> RiskAccountView:
         return RiskAccountView(
             balance=account.balance,
             available_balance=account.available_balance,
@@ -430,9 +468,12 @@ class PaperTradingService:
             emergency_stopped=self._engine.emergency_stopped,
             emergency_reason=self._engine.emergency_reason,
             mode_enabled=self.paper_enabled,
-            # Paper holds no venue orders, so nothing can be out of step with a
-            # venue. Real counts arrive with phase 8b's durable order store.
-            unreconciled_orders=0,
+            # Read from the durable order store rather than assumed. It was
+            # hardcoded to zero while no such store existed, which left the
+            # risk engine's RECONCILIATION_PENDING check unreachable -- a
+            # safety rule that could never fire.
+            unreconciled_orders=pending.count,
+            unreconciled_detail=pending.detail,
             last_entry_at=self._last_entry_at.get(symbol),
         )
 

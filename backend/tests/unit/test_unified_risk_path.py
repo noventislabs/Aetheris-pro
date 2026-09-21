@@ -35,6 +35,7 @@ from aetheris.domain.enums import (
     Timeframe,
 )
 from aetheris.domain.market import Candle, CandleSeries, Symbol, SymbolFilters, Ticker
+from aetheris.engines.order.engine import ReconciliationPending
 from aetheris.engines.paper.engine import PaperEngine, PaperEngineConfig, SubmitOrderRequest
 from aetheris.engines.paper.store import InMemoryPaperRepository
 from aetheris.services.autonomous import AUTONOMOUS_ORIGIN
@@ -381,14 +382,63 @@ async def test_insufficient_balance_is_refused() -> None:
     assert result.order.rejection_code is RiskRejectionCode.INSUFFICIENT_BALANCE
 
 
-async def test_reconciliation_pending_blocks_entry() -> None:
-    """Wired through the service's account view; inert until phase 8b."""
-    from aetheris.engines.risk.policy import RiskAccountView
+async def test_no_durable_order_store_means_no_orders_can_be_pending() -> None:
+    """Zero here is a fact, not an assumption.
 
-    assert RiskAccountView.__dataclass_fields__["unreconciled_orders"].default == 0
+    With no store configured there are no order records anywhere, so nothing
+    can be awaiting reconciliation. This is the one case where zero is safe.
+    """
     service, _, _ = build()
-    view = service._account_view(service.engine.snapshot(now=utcnow()), "TESTUSDT")
+    pending = await service._reconciliation_pending()
+    assert pending.count == 0
+    view = service._account_view(service.engine.snapshot(now=utcnow()), "TESTUSDT", pending)
     assert view.unreconciled_orders == 0
+
+
+async def test_the_real_pending_count_reaches_the_risk_engine_and_refuses() -> None:
+    """The check that could never fire, firing.
+
+    ``unreconciled_orders`` was hardcoded to zero, which made the risk engine's
+    RECONCILIATION_PENDING branch unreachable -- a safety rule that read
+    correctly and could not trigger. This binds a store that reports a pending
+    order and asserts the refusal comes back with its code.
+    """
+
+    class PendingStore:
+        async def reconciliation_pending(self) -> ReconciliationPending:
+            return ReconciliationPending(2, "two orders are awaiting reconciliation")
+
+    service, _, _ = build()
+    service.bind_order_engine(PendingStore())  # type: ignore[arg-type]
+
+    result = await service.submit_order(order(), requested_leverage=Decimal(1))
+    assert not result.accepted
+    assert result.order.rejection_code is RiskRejectionCode.RECONCILIATION_PENDING
+    assert "awaiting reconciliation" in (result.order.rejection_detail or "")
+
+
+async def test_an_unreadable_order_store_fails_closed_rather_than_returning_zero() -> None:
+    """A store that will not answer is not a store with nothing in it.
+
+    The failure mode this guards is the quiet one: an exception swallowed into
+    a default of zero would let trading continue precisely when the system has
+    lost track of what it has outstanding.
+    """
+
+    class BrokenStore:
+        async def reconciliation_pending(self) -> ReconciliationPending:
+            raise RuntimeError("connection reset")
+
+    service, _, _ = build()
+    service.bind_order_engine(BrokenStore())  # type: ignore[arg-type]
+
+    pending = await service._reconciliation_pending()
+    assert pending.count >= 1
+    assert "could not be read" in pending.detail
+
+    result = await service.submit_order(order(), requested_leverage=Decimal(1))
+    assert not result.accepted
+    assert result.order.rejection_code is RiskRejectionCode.RECONCILIATION_PENDING
 
 
 # ----------------------------------------------------------------------

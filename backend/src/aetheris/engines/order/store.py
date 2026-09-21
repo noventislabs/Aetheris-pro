@@ -26,10 +26,61 @@ from abc import ABC, abstractmethod
 from collections import defaultdict
 from collections.abc import AsyncIterator
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass
+from datetime import datetime
 
 from aetheris.domain.order import OrderRecord
 
-__all__ = ["DuplicateClientOrderIdError", "InMemoryOrderRepository", "OrderRepository"]
+#: Order ids whose lock the current task already holds. Re-entrancy is not a
+#: convenience here: a mutator that locks an order and then calls another
+#: mutator on the same order would otherwise wait for a lock it is itself
+#: holding, which is a deadlock rather than a slow path.
+_held: ContextVar[frozenset[str]] = ContextVar("aetheris_held_orders", default=frozenset())
+
+__all__ = [
+    "DuplicateClientOrderIdError",
+    "InMemoryOrderRepository",
+    "OpenOrderScan",
+    "OrderRepository",
+    "UnreadableOrder",
+]
+
+
+@dataclass(frozen=True, slots=True)
+class UnreadableOrder:
+    """A stored order that could not be turned back into an ``OrderRecord``.
+
+    It exists because the alternative is worse. Records are validated on load,
+    so one row whose parts disagree makes a whole-table read raise -- and the
+    read that raises is the recovery sweep, which means a single damaged order
+    hides every healthy one behind it.
+
+    Reported rather than skipped. An order nobody can interpret may correspond
+    to a position at a venue, so it is treated exactly as an unreconciled order
+    is: it blocks new entries until a human settles it.
+    """
+
+    order_id: str
+    state: str
+    reason: str
+
+
+@dataclass(frozen=True, slots=True)
+class OpenOrderScan:
+    """Every non-terminal order, separated into what could be read and what could not."""
+
+    records: tuple[OrderRecord, ...] = ()
+    unreadable: tuple[UnreadableOrder, ...] = ()
+
+    @property
+    def blocking(self) -> int:
+        """Orders that forbid a new entry.
+
+        Unreadable orders count. Not knowing what an order is, is strictly
+        worse than knowing it is unreconciled, so it cannot count for less.
+        """
+        return sum(1 for r in self.records if r.is_unreconciled) + len(self.unreadable)
 
 
 class OrderRepository(ABC):
@@ -54,6 +105,19 @@ class OrderRepository(ABC):
     @abstractmethod
     async def add(self, record: OrderRecord) -> OrderRecord:
         """Store a new record. Must reject a duplicate client order id."""
+
+    @abstractmethod
+    async def add_or_get(self, record: OrderRecord) -> tuple[OrderRecord, bool]:
+        """Store a new record, or return the one that already has its identity.
+
+        Returns ``(record, created)``. A retry after a restart re-derives the
+        same ``client_order_id`` and must get the persisted order back, not an
+        exception: the intent was already accepted, and raising would tell the
+        caller nothing about what happened to it.
+
+        Must be safe when two callers race. The winner is decided by the unique
+        constraint, and the loser re-reads rather than inventing a second order.
+        """
 
     @abstractmethod
     async def update(self, record: OrderRecord) -> OrderRecord:
@@ -86,7 +150,23 @@ class OrderRepository(ABC):
 
     @abstractmethod
     async def open_records(self) -> tuple[OrderRecord, ...]:
-        """Every non-terminal record -- the set a recovery pass must ask about."""
+        """Every non-terminal record -- the set a recovery pass must ask about.
+
+        Raises if any of them cannot be read. Use ``scan_open`` for the sweep
+        itself, where one damaged row must not hide the rest.
+        """
+
+    @abstractmethod
+    async def scan_open(self) -> OpenOrderScan:
+        """``open_records``, with unreadable rows isolated rather than raising."""
+
+    @abstractmethod
+    async def record_unreadable(self, order_id: str, *, detail: str, now: datetime) -> None:
+        """Write a durable discrepancy against an order that cannot be loaded.
+
+        Separate from the normal discrepancy path because that one takes an
+        ``OrderRecord``, and the whole point here is that there isn't one.
+        """
 
     @abstractmethod
     async def clear(self) -> None:
@@ -126,6 +206,12 @@ class InMemoryOrderRepository(OrderRepository):
         self._by_client_id[record.client_order_id] = record.order_id
         return record
 
+    async def add_or_get(self, record: OrderRecord) -> tuple[OrderRecord, bool]:
+        existing = self._by_client_id.get(record.client_order_id)
+        if existing is not None:
+            return self._by_order_id[existing], False
+        return await self.add(record), True
+
     async def update(self, record: OrderRecord) -> OrderRecord:
         if record.order_id not in self._by_order_id:
             raise KeyError(f"No order {record.order_id} to update")
@@ -145,18 +231,38 @@ class InMemoryOrderRepository(OrderRepository):
     async def open_records(self) -> tuple[OrderRecord, ...]:
         return tuple(r for r in self._by_order_id.values() if not r.is_terminal)
 
+    async def scan_open(self) -> OpenOrderScan:
+        """Nothing here can be unreadable: these records never left memory.
+
+        A record only becomes unreadable by being written, stored and validated
+        again on the way back, and this store hands back the same object it was
+        given. The empty ``unreadable`` tuple is therefore a fact about this
+        implementation, not a claim that damaged orders cannot exist.
+        """
+        return OpenOrderScan(records=await self.open_records())
+
+    async def record_unreadable(self, order_id: str, *, detail: str, now: datetime) -> None:
+        raise KeyError(f"No order {order_id}")
+
     @asynccontextmanager
     async def locked(self, order_id: str) -> AsyncIterator[OrderRecord | None]:
         """Serialise within this process only.
 
         An ``asyncio.Lock`` excludes two coroutines in one interpreter. It does
-        not exclude a second process, which is exactly the case phase 8b's
-        recovery pass creates. That gap is not closed by trying harder here --
-        it is closed by a row lock in a database, and this store reports
-        ``durable = False`` for the same reason.
+        not exclude a second process, which is exactly the case a recovery pass
+        running beside a live request creates. That gap is not closed by trying
+        harder here -- it is closed by a row lock in a database, and this store
+        reports ``durable = False`` for the same reason.
         """
-        async with self._locks[order_id]:
+        if order_id in _held.get():
             yield self._by_order_id.get(order_id)
+            return
+        async with self._locks[order_id]:
+            token = _held.set(_held.get() | {order_id})
+            try:
+                yield self._by_order_id.get(order_id)
+            finally:
+                _held.reset(token)
 
     async def clear(self) -> None:
         self._by_order_id.clear()

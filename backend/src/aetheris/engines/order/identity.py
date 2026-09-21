@@ -22,12 +22,19 @@ The concrete limit is asserted against the real venue by the adapter in phase
 The fix is a bounded encoding. The venue gets a short prefix plus a digest; the
 readable form is kept in our own record as ``intent_key``, where nothing
 truncates it. A reader loses nothing and the venue field cannot overflow.
+
+There are two identities here and conflating them is the mistake this module
+exists to prevent. ``client_order_id`` is the **venue** identity and must be
+derived, for the reason above. ``order_id`` is our own local handle, and it has
+the opposite requirement: it must be unique against every order that has *ever*
+existed, including the ones this process has never seen. See ``new_order_id``.
 """
 
 from __future__ import annotations
 
 import hashlib
 import re
+import uuid
 from typing import Final
 
 from aetheris.domain.enums import OrderSide
@@ -37,7 +44,31 @@ __all__ = [
     "build_intent_key",
     "client_order_id",
     "is_valid_venue_id",
+    "new_order_id",
 ]
+
+
+def new_order_id() -> str:
+    """A local order handle that no other order will ever share.
+
+    **This is the one identity that must not be derived.** ``client_order_id``
+    is derived because recovery has to reconstruct it after a restart; this one
+    is a primary key, and the requirement is the mirror image -- it must not
+    collide with an order written by a previous process, a previous boot, or a
+    worker running right now.
+
+    A per-process counter satisfied that only while the store died with the
+    process. Against a durable store it resets to zero on every boot and the
+    first order after a restart collides with the first order of the run
+    before, which surfaces as a unique-constraint violation on the very
+    operation a restart is supposed to make safe.
+
+    A random UUID needs no coordination, no round trip, and no shared state, so
+    it holds across restarts and across concurrent workers alike. The ``order-``
+    prefix is kept so the value is still recognisable in a log.
+    """
+    return f"order-{uuid.uuid4().hex}"
+
 
 #: The venue's client-order-id limit. Stated as a constant rather than a magic
 #: number because the whole encoding exists to respect it, and because phase 8c

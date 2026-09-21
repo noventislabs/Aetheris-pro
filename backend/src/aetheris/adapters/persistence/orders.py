@@ -31,6 +31,7 @@ from contextvars import ContextVar
 from datetime import datetime
 from typing import Any
 
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -46,12 +47,20 @@ from aetheris.domain.order import (
     OrderOrigin,
     OrderRecord,
 )
-from aetheris.engines.order.store import DuplicateClientOrderIdError, OrderRepository
+from aetheris.engines.order.store import (
+    DuplicateClientOrderIdError,
+    OpenOrderScan,
+    OrderRepository,
+    UnreadableOrder,
+)
 
 __all__ = ["PostgresOrderRepository"]
 
 #: The transaction a nested repository call should join, if one is open.
 _ambient: ContextVar[AsyncSession | None] = ContextVar("aetheris_order_session", default=None)
+#: Rows already locked by the open transaction, so a nested lock re-reads
+#: rather than waiting on itself.
+_locked_ids: ContextVar[frozenset[str]] = ContextVar("aetheris_locked_orders", default=frozenset())
 
 
 class PostgresOrderRepository(OrderRepository):
@@ -98,24 +107,58 @@ class PostgresOrderRepository(OrderRepository):
 
     @asynccontextmanager
     async def locked(self, order_id: str) -> AsyncIterator[OrderRecord | None]:
-        """Take a row lock and hold it for the caller's whole block."""
+        """Take a row lock and hold it for the caller's whole block.
+
+        Re-entrant, and it has to be. A mutator locks the order it is about to
+        change and then calls another mutator on the same order -- reconcile
+        into apply_reconciliation, resolve_manually into begin_reconciliation.
+        A second ``SELECT ... FOR UPDATE`` from a *different* connection would
+        wait for the transaction that is waiting for it: a real deadlock, on
+        the recovery path, resolved only by a timeout.
+
+        Two cases, both correct:
+
+        - Already locked in this transaction: re-read it. PostgreSQL row locks
+          are held by the transaction, so the row is still ours.
+        - A transaction is open but this row is not locked: lock it *in that
+          transaction*. Acquiring a second row lock inside one transaction is
+          ordinary, and it keeps the whole sequence atomic.
+        """
+        existing = _ambient.get()
+        if existing is not None:
+            if order_id in _locked_ids.get():
+                row = await self._row(existing, order_id)
+                yield await self._hydrate(existing, row) if row is not None else None
+                return
+            nested = _locked_ids.set(_locked_ids.get() | {order_id})
+            try:
+                row = await self._row_for_update(existing, order_id)
+                yield await self._hydrate(existing, row) if row is not None else None
+            finally:
+                _locked_ids.reset(nested)
+            return
+
         async with session_scope(self._factory, str(self._owner_id)) as session:
             token = _ambient.set(session)
+            id_token = _locked_ids.set(_locked_ids.get() | {order_id})
             try:
-                row = (
-                    await session.execute(
-                        select(OrderRow)
-                        .where(
-                            OrderRow.order_id == order_id,
-                            OrderRow.account_id == self._account_id,
-                        )
-                        .with_for_update()
-                    )
-                ).scalar_one_or_none()
-                record = await self._hydrate(session, row) if row is not None else None
-                yield record
+                row = await self._row_for_update(session, order_id)
+                yield await self._hydrate(session, row) if row is not None else None
             finally:
+                _locked_ids.reset(id_token)
                 _ambient.reset(token)
+
+    async def _row_for_update(self, session: AsyncSession, order_id: str) -> OrderRow | None:
+        return (
+            await session.execute(
+                select(OrderRow)
+                .where(
+                    OrderRow.order_id == order_id,
+                    OrderRow.account_id == self._account_id,
+                )
+                .with_for_update()
+            )
+        ).scalar_one_or_none()
 
     # ------------------------------------------------------------------
     # Writes
@@ -138,6 +181,26 @@ class PostgresOrderRepository(OrderRepository):
             raise self._integrity(record, exc) from None
         except SQLAlchemyError as exc:
             raise DatabaseUnavailableError(f"could not store order: {type(exc).__name__}") from None
+
+    async def add_or_get(self, record: OrderRecord) -> tuple[OrderRecord, bool]:
+        """Insert, or hand back the order that already owns this identity.
+
+        The read comes first because the common case after a restart is that
+        the order is simply there. The insert is still allowed to fail: between
+        the read and the write another worker may win, and the constraint --
+        not this code -- is what decides. Losing that race is not an error, it
+        is the answer, so the loser re-reads instead of raising.
+        """
+        existing = await self.get_by_client_order_id(record.client_order_id)
+        if existing is not None:
+            return existing, False
+        try:
+            return await self.add(record), True
+        except DuplicateClientOrderIdError:
+            winner = await self.get_by_client_order_id(record.client_order_id)
+            if winner is None:  # pragma: no cover - the constraint just fired
+                raise
+            return winner, False
 
     async def update(self, record: OrderRecord) -> OrderRecord:
         self._require_own_account(record)
@@ -170,17 +233,30 @@ class PostgresOrderRepository(OrderRepository):
         they can diverge and the record's own validator would then reject what
         it just loaded.
         """
-        known_fills = set(
-            (
-                await session.execute(
-                    select(OrderFillRow.fill_id).where(OrderFillRow.order_id == row.id)
-                )
+        stored_fills = {
+            f.fill_id: f
+            for f in (
+                (await session.execute(select(OrderFillRow).where(OrderFillRow.order_id == row.id)))
+                .scalars()
+                .all()
             )
-            .scalars()
-            .all()
-        )
+        }
+        intended = {fill.fill_id for fill in record.fills}
+
+        # Rows the record no longer carries are removed. Appending only was the
+        # obvious reading of "fills are append-only", and it was wrong in
+        # exactly one place: adopting a venue total deliberately drops the
+        # local fills, because per-fill detail cannot be reconstructed from a
+        # summary. Keeping the old rows beside the new total left the record's
+        # parts disagreeing with its own sum, and a record like that does not
+        # fail on write -- it fails on every future *read*, including the
+        # recovery sweep that needed it most.
+        for fill_id, stale in stored_fills.items():
+            if fill_id not in intended:
+                await session.delete(stale)
+
         for fill in record.fills:
-            if fill.fill_id in known_fills:
+            if fill.fill_id in stored_fills:
                 continue
             session.add(
                 OrderFillRow(
@@ -275,6 +351,81 @@ class PostgresOrderRepository(OrderRepository):
             )
             return tuple([await self._hydrate(session, row) for row in rows])
 
+    async def scan_open(self) -> OpenOrderScan:
+        """The recovery sweep's read: one bad row must not hide the good ones.
+
+        ``open_records`` builds an ``OrderRecord`` per row and a record is
+        validated on load, so a single order whose parts disagree makes the
+        whole call raise -- and the call that raises is the sweep, which means
+        one damaged order would conceal every other unreconciled one behind it.
+        That is the opposite of failing closed.
+
+        So each row is hydrated on its own and a failure becomes a reported
+        ``UnreadableOrder`` rather than an exception. Reported, never skipped:
+        an order nobody can interpret may still be a position at a venue, so it
+        counts as blocking exactly like an unreconciled one.
+        """
+        terminal = [state.value for state in OrderState if state.is_terminal]
+        records: list[OrderRecord] = []
+        unreadable: list[UnreadableOrder] = []
+        async with self._session() as session:
+            rows = (
+                (
+                    await session.execute(
+                        select(OrderRow)
+                        .where(
+                            OrderRow.account_id == self._account_id,
+                            OrderRow.state.notin_(terminal),
+                        )
+                        .order_by(OrderRow.created_at)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            for row in rows:
+                try:
+                    records.append(await self._hydrate(session, row))
+                except (ValidationError, ValueError) as exc:
+                    unreadable.append(
+                        UnreadableOrder(
+                            order_id=row.order_id,
+                            state=row.state,
+                            # The class, not the message: the message can carry
+                            # figures from the row, and this string is surfaced.
+                            reason=type(exc).__name__,
+                        )
+                    )
+        return OpenOrderScan(records=tuple(records), unreadable=tuple(unreadable))
+
+    async def record_unreadable(self, order_id: str, *, detail: str, now: datetime) -> None:
+        """Write the evidence for an order that cannot be loaded.
+
+        Reaches past the record mapping deliberately: there is no
+        ``OrderRecord`` to copy, which is the whole condition being recorded.
+        The row's own ``state`` column is readable even when the record it
+        belongs to is not.
+        """
+        try:
+            async with self._session() as session:
+                row = await self._row(session, order_id)
+                if row is None:
+                    raise KeyError(f"No order {order_id}")
+                session.add(
+                    OrderDiscrepancyRow(
+                        owner_id=self._owner_id,
+                        order_id=row.id,
+                        observed_at=now,
+                        detail=detail,
+                        local_state=row.state,
+                    )
+                )
+                await session.flush()
+        except SQLAlchemyError as exc:
+            raise DatabaseUnavailableError(
+                f"could not record the unreadable order: {type(exc).__name__}"
+            ) from None
+
     async def clear(self) -> None:
         """Discard this account's orders. Development and tests only."""
         async with self._session() as session:
@@ -333,6 +484,14 @@ class PostgresOrderRepository(OrderRepository):
                 "Identity is derived from intent, so a duplicate means the same intent "
                 "was submitted twice -- which is exactly what the identity exists to "
                 "prevent."
+            )
+        if constraint == "orders_order_id_key" or "orders_order_id_key" in str(exc):
+            # Unreachable with a random local id, and named anyway: reporting an
+            # identity collision as a database outage sent the last reader
+            # looking at the network.
+            return ValueError(
+                f"order id {record.order_id} is already in use. Local order ids must be "
+                "unique across every process and every restart."
             )
         return DatabaseUnavailableError(f"integrity constraint violated: {constraint or 'unknown'}")
 

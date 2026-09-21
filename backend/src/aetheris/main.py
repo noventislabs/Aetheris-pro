@@ -63,16 +63,22 @@ async def _open_order_store(app: FastAPI, settings: Settings) -> None:
     app.state.db_sessions = None
     app.state.order_engine = None
     app.state.order_account_id = None
+    app.state.order_recovery = None
 
     if settings.database_url is None:
-        _log.info("database_not_configured", persistence="absent", crash_recovery=False)
+        _log.info(
+            "database_not_configured",
+            persistence="absent",
+            order_crash_recovery=False,
+            paper_crash_recovery=False,
+        )
         return
 
     engine = build_engine(settings)
     app.state.db_engine = engine
     reachable, detail = await check_connectivity(engine)
     if not reachable:
-        _log.warning("database_unreachable", detail=detail, crash_recovery=False)
+        _log.warning("database_unreachable", detail=detail, order_crash_recovery=False)
         return
 
     factory = build_session_factory(engine)
@@ -86,17 +92,38 @@ async def _open_order_store(app: FastAPI, settings: Settings) -> None:
             starting_balance=settings.risk.paper_starting_balance,
         )
     except DatabaseUnavailableError as exc:
-        _log.warning("database_bootstrap_failed", detail=str(exc), crash_recovery=False)
+        _log.warning("database_bootstrap_failed", detail=str(exc), order_crash_recovery=False)
         return
 
     repository = PostgresOrderRepository(factory, owner_id=owner_id, account_id=account_id)
-    app.state.order_engine = OrderLifecycleEngine(repository)
+    order_engine = OrderLifecycleEngine(repository)
+    app.state.order_engine = order_engine
     app.state.order_account_id = account_id
+
+    # The recovery pass. Not optional and not deferred: the value of a durable
+    # order record is entirely in what is done with it on the next boot, and
+    # until this ran, "crash recovery" named a protocol nobody invoked.
+    report = await order_engine.recover(now=utcnow())
+    app.state.order_recovery = report
+
+    # The risk engine's RECONCILIATION_PENDING check was unreachable while the
+    # count was hardcoded to zero. Binding the store is what makes it fire.
+    app.state.paper_service.bind_order_engine(order_engine)
+
     _log.info(
         "database_ready",
         detail=detail,
         durable_orders=repository.durable,
-        crash_recovery=True,
+        # Named per subsystem, because one of these is true and the other is
+        # not. Paper account state is still in memory by design.
+        order_crash_recovery=True,
+        paper_crash_recovery=False,
+        recovery_scanned=report.scanned,
+        recovery_interrupted=len(report.interrupted),
+        recovery_never_submitted=len(report.never_submitted),
+        recovery_already_unresolved=len(report.already_unresolved),
+        recovery_unreadable=len(report.unreadable),
+        entries_blocked=report.blocking,
     )
 
 

@@ -65,7 +65,10 @@ def test_system_status_reports_spec_risk_defaults(client: TestClient) -> None:
 def test_capabilities_endpoint_lists_planned_work(client: TestClient) -> None:
     capabilities = client.get("/api/v1/system/capabilities").json()["capabilities"]
     by_key = {c["key"]: c for c in capabilities}
-    assert by_key["order.persistence"]["status"] == "PLANNED"
+    # PARTIAL since phase 8a: records are durable in PostgreSQL and a recovery
+    # pass runs at startup. Still not AVAILABLE -- nothing submits anywhere.
+    assert by_key["order.persistence"]["status"] == "PARTIAL"
+    assert by_key["execution.testnet"]["status"] == "PLANNED"
     assert by_key["core.money"]["status"] == "AVAILABLE"
 
 

@@ -186,7 +186,10 @@ def test_capabilities_report_paper_as_built_and_execution_as_not(client: TestCli
     assert by_key["risk.engine"]["status"] == "AVAILABLE"
     assert by_key["execution.testnet"]["status"] == "PLANNED"
     assert by_key["execution.live"]["status"] == "PLANNED"
-    assert by_key["order.persistence"]["status"] == "PLANNED"
+    # PARTIAL since phase 8a: records are durable in PostgreSQL and a recovery
+    # pass runs at startup. Still not AVAILABLE -- nothing submits anywhere.
+    assert by_key["order.persistence"]["status"] == "PARTIAL"
+    assert by_key["execution.testnet"]["status"] == "PLANNED"
 
 
 # ----------------------------------------------------------------------

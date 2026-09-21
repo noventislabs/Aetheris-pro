@@ -254,7 +254,10 @@ def test_capabilities_now_report_market_data_as_available(
     assert by_key["exchange.binance_futures"]["status"] == "AVAILABLE"
     assert by_key["market.symbol_discovery"]["status"] == "AVAILABLE"
     # Execution remains unclaimed.
-    assert by_key["order.persistence"]["status"] == "PLANNED"
+    # PARTIAL since phase 8a: records are durable in PostgreSQL and a recovery
+    # pass runs at startup. Still not AVAILABLE -- nothing submits anywhere.
+    assert by_key["order.persistence"]["status"] == "PARTIAL"
+    assert by_key["execution.testnet"]["status"] == "PLANNED"
     assert by_key["execution.live"]["status"] == "PLANNED"
 
 
