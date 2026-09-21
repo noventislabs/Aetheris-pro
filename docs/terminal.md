@@ -1,8 +1,10 @@
 # Market terminal
 
-> Status: Phase 3. **Analysis interface only.** The terminal displays market
-> data and rankings. It has no order entry, no credential storage and no write
-> path of any kind — the backend it talks to exposes only `GET` routes.
+> Status: Phase 3. **The Markets and Scanner pages described here are analysis
+> only** — they display market data and rankings and have no order entry. The
+> terminal as a whole gained order entry later, on the `/paper` and `/testnet`
+> pages, which are covered in their own documents. **No page stores or handles
+> a credential**, and the frontend never signs a venue request.
 
 ## 1. Stack, and what was deliberately left out
 

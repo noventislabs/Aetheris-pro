@@ -31,9 +31,8 @@ It is not a fork, port or reimplementation of any existing trading framework.
 Feature *scope* is informed by what such systems are expected to do; the
 architecture, domain model and code are its own.
 
-Smart Money Concepts, hyperparameter optimisation, portfolio accounting and the
-Falcon AI command layer are **scope, not code** — see
-[Planned and locked](#planned-and-locked).
+Smart Money Concepts, portfolio accounting and the Falcon AI command layer are
+**scope, not code** — see [Planned and locked](#planned-and-locked).
 
 ## Pipeline
 
@@ -41,6 +40,10 @@ Falcon AI command layer are **scope, not code** — see
 Market data            Binance USDT-M Futures, public REST, read-only
       ↓
 Analysis               scanner · 11 indicators · rule-based strategy
+      ↓
+Market regime          TREND_UP / TREND_DOWN / RANGE / volatility / UNKNOWN
+      ↓
+Setup score            0-100 strategy alignment, with risk/reward
       ↓
 Backtesting            historical simulation over past candles
       ↓
@@ -117,8 +120,30 @@ These are enforced by code and tests, not by convention:
   rules are explicit.
 - **Rule-based strategy analysis** — a trend/momentum rule set reporting which
   named conditions hold, with the measured value of each.
+- **Market regime classification** — `TREND_UP`, `TREND_DOWN`, `RANGE`,
+  `HIGH_VOLATILITY`, `LOW_VOLATILITY` or `UNKNOWN`, from ADX, an EMA pair and
+  ATR percentage. Thresholds are published and versioned; the volatility axis
+  is reported separately so a trending market still says whether it is calm or
+  violent. `UNKNOWN` is never collapsed into `RANGE`. **Arithmetic, not a
+  model** — the learned classifier in phase 9 remains unbuilt.
+- **Setup scoring** — a bounded 0-100 score over six published, weighted
+  components: trend and momentum alignment, independent regime agreement,
+  risk/reward, volatility fitness and volume confirmation. Deterministic, and
+  every component carries its raw measurement so the total can be recomputed
+  by hand. Long and short are evaluated independently. It measures **strategy
+  alignment, not a probability of profit** — see [Scores](#scores).
+- **Risk/reward derivation** — real entry, stop and target from fixed-percent,
+  ATR or structure stop models at a configurable R multiple. A setup whose
+  stop cannot be derived safely reports `NO_ACTIONABLE_SETUP` rather than
+  inventing a level.
 - **Backtesting** — historical simulation with a pessimistic fill model that
-  publishes its assumptions and what it does not model.
+  publishes its assumptions and what it does not model. Reports win rate,
+  profit factor, drawdown, longest losing streak, average R and exposure.
+- **Bounded parameter search** — deterministic grid search over real strategy
+  parameters against a published multi-factor objective, with chronological
+  train/validation/test windows enforced by the split type itself. Selection
+  reads validation; the test window is scored once afterwards and never
+  influences the choice.
 
 ### Trading
 - **Risk engine** — ordered checks covering mode, emergency stop,
@@ -215,7 +240,7 @@ Nothing below is implemented. None of it is reachable at runtime.
 | **Falcon AI command centre** | Planned, phase 9. No module. |
 | **AI/ML analysis layer** | Planned, phase 9. No model is bundled. |
 | **Smart Money Concepts** | Planned. Not implemented — no SMC module exists. |
-| **Hyperparameter optimisation** | Planned. |
+| **Walk-forward optimisation** | Partial. Rolling windows are implemented and tested as a primitive, but the optimizer performs a single three-way split and does not yet drive them. No API route and no stored reports. |
 | **WebSocket streaming** | Not implemented, for market data or fills. |
 | **Authentication and users** | Planned, phase 1. The `users` table exists; Argon2id credentials and sessions do not. |
 | **Portfolio and position accounting** | Planned. |
@@ -236,6 +261,27 @@ differs.
 An unknown ceiling is never permission. On the testnet path the approval is
 binding: the venue must confirm both the leverage and ISOLATED margin, or the
 order refuses.
+
+## Scores
+
+Three different numbers in this system are easy to confuse, so they are named
+and bounded differently on purpose.
+
+| | What it measures | What it is not |
+|---|---|---|
+| **Setup score** (0–100) | How completely current measurements satisfy one strategy's published rules, and whether the resulting trade is worth its own risk. | Not a probability of profit, a win rate, or an expected return. |
+| **Market Opportunity Score** (scanner) | How unusually active an instrument is right now, for ranking. | Not a prediction, and not a claim that a trade exists. |
+| **Backtest metrics** | What a rule set actually did over specific historical bars under stated assumptions. | Not a forecast. A historical win rate is not a future probability. |
+
+**Setup score and backtest metrics are never merged.** A setup scoring 90 does
+not have a 90% win rate, and the two are reported as separate objects so no
+caller can accidentally present one as the other. Historical performance is
+deliberately excluded from the setup score's components for the same reason —
+folding it in is what turns a present-tense alignment measure into something
+that reads like a forecast.
+
+No component of this system produces a calibrated probability of profit,
+because nothing in it is a model that could.
 
 ## Trading defaults
 

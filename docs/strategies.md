@@ -1,8 +1,11 @@
 # Strategy analysis
 
 > Status: Phase 4. **Analysis only.** A strategy here produces a reading of
-> indicator values, never an instruction. Nothing in this system places an
-> order, sets leverage, or holds a credential, in any mode.
+> indicator values, never an instruction. This layer places no order, sets no
+> leverage and holds no credential; execution lives behind the risk engine in
+> a separate service, and a strategy reading can only ever be a proposal to
+> it. Setup scoring and risk/reward derivation build on this layer without
+> changing its published rule set.
 
 ## 1. What a result is, and is not
 

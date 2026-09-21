@@ -23,7 +23,7 @@ from aetheris.analysis.backtest.engine import (
 )
 from aetheris.analysis.backtest.metrics import compute_metrics
 from aetheris.analysis.strategies.trend_momentum import TrendMomentumParams, warmup_bars
-from aetheris.domain.backtest import BacktestConfig, BacktestStatus, ExitReason
+from aetheris.domain.backtest import BacktestConfig, BacktestStatus, ExitReason, Trade
 from aetheris.domain.enums import PositionSide, Timeframe
 from aetheris.domain.market import Candle
 
@@ -491,3 +491,95 @@ def test_no_execution_vocabulary_leaks_into_the_backtest_layer() -> None:
         source = path.read_text(encoding="utf-8")
         for forbidden in ("set_leverage", "place_order", "/fapi/", "api_key"):
             assert forbidden not in source, f"{path.name} references {forbidden}"
+
+
+# ----------------------------------------------------------------------
+# Streaks, R multiples and expectancy
+# ----------------------------------------------------------------------
+
+
+def _trade(net: str, *, notional: str = "100") -> Trade:
+    """A minimal completed trade. Only the fields the metrics read matter."""
+    return Trade(
+        side=PositionSide.LONG,
+        entry_time=BASE,
+        exit_time=BASE + timedelta(hours=1),
+        entry_price=Decimal(100),
+        exit_price=Decimal(100) + Decimal(net),
+        quantity=Decimal(1),
+        notional=Decimal(notional),
+        margin=Decimal(100),
+        leverage=Decimal(1),
+        exit_reason=ExitReason.TAKE_PROFIT if Decimal(net) > 0 else ExitReason.STOP_LOSS,
+        bars_held=1,
+        gross_pnl=Decimal(net),
+        fees=Decimal(0),
+        net_pnl=Decimal(net),
+        return_percent=Decimal(net),
+        equity_after=Decimal(100) + Decimal(net),
+    )
+
+
+def _metrics_over(trades: list[Trade], **overrides: object) -> object:
+    return compute_metrics(
+        trades=trades,
+        curve=[],
+        config=BacktestConfig(**overrides),  # type: ignore[arg-type]
+        timeframe=Timeframe.H1,
+        bars_in_position=0,
+        trades_open_at_end=0,
+    )
+
+
+def test_the_longest_losing_streak_is_the_worst_run_not_the_total() -> None:
+    """Six losses scattered in two runs of three is a streak of three."""
+    pattern = ["-1", "-1", "-1", "5", "-1", "-1", "-1", "5"]
+    result = _metrics_over([_trade(net) for net in pattern])
+    assert result.max_consecutive_losses == 3  # type: ignore[attr-defined]
+    assert result.losing_trades == 6  # type: ignore[attr-defined]
+
+
+def test_a_breakeven_trade_breaks_a_streak_without_extending_it() -> None:
+    """A flat trade is not another loss, and counting it as one overstates."""
+    result = _metrics_over([_trade(n) for n in ("-1", "-1", "0", "-1")])
+    assert result.max_consecutive_losses == 2  # type: ignore[attr-defined]
+
+
+def test_winning_streaks_are_tracked_too() -> None:
+    result = _metrics_over([_trade(n) for n in ("2", "2", "2", "-1", "2")])
+    assert result.max_consecutive_wins == 3  # type: ignore[attr-defined]
+
+
+def test_average_r_is_measured_against_the_planned_risk() -> None:
+    """Notional 100 at a 2% stop plans to risk 2. A +4 trade is therefore 2R."""
+    result = _metrics_over([_trade("4"), _trade("4")], stop_loss_percent=Decimal(2))
+    assert result.average_r == Decimal(2)  # type: ignore[attr-defined]
+
+
+def test_average_r_mixes_wins_and_losses_signed() -> None:
+    """+2R and -1R average to +0.5R, not to 1.5R."""
+    result = _metrics_over([_trade("4"), _trade("-2")], stop_loss_percent=Decimal(2))
+    assert result.average_r == Decimal("0.5")  # type: ignore[attr-defined]
+
+
+def test_average_r_is_none_without_a_configured_stop() -> None:
+    """No planned risk means no R to divide by. Undefined, not zero."""
+    result = _metrics_over([_trade("4")], stop_loss_percent=None)
+    assert result.average_r is None  # type: ignore[attr-defined]
+
+
+def test_streaks_are_zero_for_an_empty_run() -> None:
+    result = _metrics_over([])
+    assert result.max_consecutive_losses == 0  # type: ignore[attr-defined]
+    assert result.max_consecutive_wins == 0  # type: ignore[attr-defined]
+    assert result.average_r is None  # type: ignore[attr-defined]
+
+
+def test_a_real_run_reports_the_new_metrics() -> None:
+    """Not just synthetic trades: the engine must populate these end to end."""
+    result = run(walk(600))
+    metrics = result.metrics  # type: ignore[attr-defined]
+    assert metrics is not None
+    assert metrics.max_consecutive_losses >= 0
+    assert metrics.max_consecutive_losses <= metrics.total_trades
+    assert metrics.average_r is not None  # the default config sets a stop

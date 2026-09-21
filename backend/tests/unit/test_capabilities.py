@@ -320,3 +320,51 @@ def test_phase_nine_is_not_claimed_in_any_form() -> None:
         assert capability.status is CapabilityStatus.PLANNED, (
             f"{capability.key} claims {capability.status} but phase 9 is not started"
         )
+
+
+def test_rule_based_regime_is_not_confused_with_the_ai_capability() -> None:
+    """Both describe "regime classification". Only one is a model.
+
+    ``analysis.regime`` is arithmetic over published thresholds and ships now.
+    ``ai.analysis`` is learned classification and does not exist. Marking the
+    second available because the first landed is precisely the drift the
+    registry is here to prevent.
+    """
+    regime = get_capability("analysis.regime")
+    assert regime is not None
+    assert regime.status is CapabilityStatus.AVAILABLE
+    assert "ARITHMETIC, NOT A MODEL" in regime.detail
+    assert "UNKNOWN" in regime.detail
+
+    ai = get_capability("ai.analysis")
+    assert ai is not None
+    assert ai.status is CapabilityStatus.PLANNED
+
+
+def test_setup_scoring_states_what_its_number_is_not() -> None:
+    """A 0-100 score is the single most misreadable thing here."""
+    score = get_capability("analysis.setup_score")
+    assert score is not None
+    assert score.status is CapabilityStatus.AVAILABLE
+    assert "NOT A PROBABILITY OF" in score.detail
+    # And it must say that past performance is not folded in, because a score
+    # that quietly included it would read as a forecast.
+    assert "reported separately as backtest metrics" in score.detail
+
+
+def test_optimisation_is_partial_and_names_what_is_missing() -> None:
+    """Grid search landed; walk-forward driving and an API route did not."""
+    optimisation = get_capability("optimize.hyperparameters")
+    assert optimisation is not None
+    assert optimisation.status is CapabilityStatus.PARTIAL
+    assert optimisation.status is not CapabilityStatus.AVAILABLE
+    assert "train/validation/test" in optimisation.detail
+    assert "NOT yet driven by the optimizer" in optimisation.detail
+    assert "no API route" in optimisation.detail
+
+
+def test_smc_is_still_unbuilt_after_the_strategy_work() -> None:
+    """Scoring and regime are not structure analysis, however adjacent."""
+    smc = get_capability("analysis.smc")
+    assert smc is not None
+    assert smc.status is CapabilityStatus.PLANNED

@@ -166,6 +166,22 @@ class BacktestMetrics(BaseModel):
     max_drawdown_percent: Decimal = Field(ge=0)
     max_drawdown_absolute: Decimal = Field(ge=0)
 
+    #: The longest run of consecutive losing and winning trades, in trade
+    #: order. A strategy's worst streak is what a reader has to sit through,
+    #: and an average never shows it.
+    max_consecutive_losses: int = Field(default=0, ge=0)
+    max_consecutive_wins: int = Field(default=0, ge=0)
+
+    #: Mean outcome per trade expressed in R -- multiples of the risk the
+    #: configuration planned to take. ``None`` when the run configured no
+    #: stop loss, because without a planned risk there is no R to divide by.
+    #:
+    #: The textbook expectancy formula, (win_rate x average_win) minus
+    #: (loss_rate x average_loss), reduces algebraically to exactly this mean.
+    #: It is therefore reported once under one name rather than twice under
+    #: two, which would imply two independent measurements.
+    average_r: Decimal | None = None
+
     #: Standard deviation of per-bar returns, scaled by the bars in a year for
     #: the timeframe. Assumes a zero risk-free rate; see the engine notes.
     sharpe_like_ratio: Decimal | None = None

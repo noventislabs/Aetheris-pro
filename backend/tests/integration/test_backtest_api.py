@@ -299,9 +299,15 @@ def test_capabilities_report_the_backtester_as_available(client: TestClient) -> 
     capabilities = client.get("/api/v1/system/capabilities").json()["capabilities"]
     by_key = {c["key"]: c for c in capabilities}
     assert by_key["backtest.engine"]["status"] == "AVAILABLE"
-    # Still unbuilt, still unclaimed.
-    assert by_key["optimize.hyperparameters"]["status"] == "PLANNED"
-    assert by_key["execution.live"]["status"] == "PLANNED"
+    # Optimisation left PLANNED when the bounded grid search, its objective
+    # and the enforced train/validation/test split landed. PARTIAL, not
+    # AVAILABLE: walk-forward is a tested primitive the optimizer does not
+    # yet drive, and there is no route and no persistence.
+    optimisation = by_key["optimize.hyperparameters"]
+    assert optimisation["status"] == "PARTIAL"
+    assert optimisation["status"] != "AVAILABLE"
+    assert "NOT yet driven by the optimizer" in optimisation["detail"]
+    # Searching parameters moves nothing. Live is untouched by any of it.
     assert by_key["execution.live"]["status"] == "PLANNED"
 
 

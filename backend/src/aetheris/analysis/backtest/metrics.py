@@ -37,6 +37,44 @@ def _q(value: Decimal, exponent: Decimal = _MONEY) -> Decimal:
     return value.quantize(exponent)
 
 
+def _longest_run(trades: Sequence[Trade], *, losing: bool) -> int:
+    """Longest unbroken streak of losing (or winning) trades, in trade order.
+
+    Break-even trades break a streak rather than extending it: a flat trade
+    is not another loss, and counting it as one would overstate the worst run.
+    """
+    longest = current = 0
+    for trade in trades:
+        hit = trade.net_pnl < _ZERO if losing else trade.net_pnl > _ZERO
+        current = current + 1 if hit else 0
+        longest = max(longest, current)
+    return longest
+
+
+def _average_r(trades: Sequence[Trade], config: BacktestConfig) -> Decimal | None:
+    """Mean outcome in multiples of the risk the configuration planned.
+
+    Planned risk per trade is the notional moved by the configured stop
+    distance -- what the run intended to lose if the stop filled exactly.
+    Without a configured stop there is no planned risk, so the statistic is
+    undefined and returns ``None`` rather than a substitute.
+
+    Realised risk can exceed planned risk when a bar gaps through the stop.
+    That is a property of the market, not an error here: the R multiple is
+    measured against what was planned, which is what makes it comparable
+    across trades.
+    """
+    if not trades or config.stop_loss_percent is None:
+        return None
+    multiples: list[Decimal] = []
+    for trade in trades:
+        planned_risk = trade.notional * config.stop_loss_percent / _HUNDRED
+        if planned_risk <= _ZERO:
+            return None
+        multiples.append(trade.net_pnl / planned_risk)
+    return _q(_mean(multiples), _RATIO)
+
+
 def _mean(values: Sequence[Decimal]) -> Decimal:
     return sum(values, _ZERO) / Decimal(len(values))
 
@@ -126,6 +164,9 @@ def compute_metrics(
         largest_loss=_q(min(trade.net_pnl for trade in losses)) if losses else None,
         max_drawdown_percent=_q(max_drawdown_percent, _PCT),
         max_drawdown_absolute=_q(max_drawdown_absolute),
+        max_consecutive_losses=_longest_run(trades, losing=True),
+        max_consecutive_wins=_longest_run(trades, losing=False),
+        average_r=_average_r(trades, config),
         sharpe_like_ratio=(
             _q(value, _RATIO) if (value := _sharpe_like(curve, timeframe)) is not None else None
         ),

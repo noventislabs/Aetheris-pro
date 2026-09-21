@@ -207,6 +207,38 @@ CAPABILITIES: tuple[Capability, ...] = (
         detail="Structure, liquidity and imbalance analysis. Not started.",
     ),
     Capability(
+        key="analysis.regime",
+        name="Market regime classification (rule-based)",
+        status=CapabilityStatus.AVAILABLE,
+        phase=4,
+        detail=(
+            "TREND_UP, TREND_DOWN, RANGE, HIGH_VOLATILITY, LOW_VOLATILITY or UNKNOWN, "
+            "from ADX, an EMA pair and ATR percentage, with every threshold published "
+            "and versioned. The volatility axis is reported separately so a trending "
+            "market still says whether it is calm or violent. UNKNOWN is returned when "
+            "an input has not warmed up and is never collapsed into RANGE. This is "
+            "ARITHMETIC, NOT A MODEL: the learned regime classification in ai.analysis "
+            "is a separate, unbuilt capability."
+        ),
+    ),
+    Capability(
+        key="analysis.setup_score",
+        name="Strategy setup scoring",
+        status=CapabilityStatus.AVAILABLE,
+        phase=4,
+        detail=(
+            "A bounded 0-100 score over six published, weighted components: trend and "
+            "momentum alignment against the strategy's own rules, independent regime "
+            "agreement, risk/reward, volatility fitness and volume confirmation. "
+            "Deterministic, and every component carries its raw measurement so the "
+            "total can be recomputed by hand. Long and short are evaluated "
+            "independently. It measures STRATEGY ALIGNMENT, NOT A PROBABILITY OF "
+            "PROFIT, a win rate or an expected return -- no model here could produce "
+            "one. Historical performance is deliberately excluded from the score and "
+            "reported separately as backtest metrics."
+        ),
+    ),
+    Capability(
         key="strategy.engine",
         name="Strategy analysis engine",
         status=CapabilityStatus.AVAILABLE,
@@ -233,9 +265,20 @@ CAPABILITIES: tuple[Capability, ...] = (
     Capability(
         key="optimize.hyperparameters",
         name="Hyperparameter optimisation",
-        status=CapabilityStatus.PLANNED,
+        status=CapabilityStatus.PARTIAL,
         phase=5,
-        detail="Parameter search with train/test separation and overfitting warnings.",
+        detail=(
+            "Bounded, deterministic grid search over real strategy parameters, with a "
+            "published multi-factor objective (return, profit factor, drawdown, losing "
+            "streak) behind a minimum-trade gate that rejects a large result drawn from "
+            "a handful of trades. Chronological train/validation/test windows are "
+            "enforced by the split type itself: selection reads validation, and the "
+            "test window is scored once afterwards and never influences the choice. "
+            "PARTIAL: rolling walk-forward windows are implemented and tested as a "
+            "primitive but are NOT yet driven by the optimizer, which performs a single "
+            "three-way split; there is no API route, no persistence of reports, and no "
+            "search strategy beyond an exhaustive grid."
+        ),
     ),
     Capability(
         key="paper.engine",
