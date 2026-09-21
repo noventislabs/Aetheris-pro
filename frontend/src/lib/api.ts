@@ -16,6 +16,10 @@
 import type {
   ApiErrorBody,
   BacktestResult,
+  PaperAccount,
+  PaperMethod,
+  PaperOrderResult,
+  PaperTickResult,
   IndicatorCatalogue,
   IndicatorSet,
   StrategyResult,
@@ -129,12 +133,19 @@ async function request<T>(
   path: string,
   validate: (value: unknown) => value is T,
   signal?: AbortSignal,
+  body?: unknown,
 ): Promise<T> {
   let response: Response;
   try {
     response = await fetch(`${API_BASE_URL}${path}`, {
       signal,
-      headers: { Accept: "application/json" },
+      // A body means a write, and the only writes this client makes are the
+      // paper trading ones. Everything else stays a GET.
+      method: body === undefined ? "GET" : "POST",
+      headers: body === undefined
+        ? { Accept: "application/json" }
+        : { Accept: "application/json", "Content-Type": "application/json" },
+      body: body === undefined ? undefined : JSON.stringify(body),
       cache: "no-store",
     });
   } catch (cause) {
@@ -379,4 +390,130 @@ export function runBacktest(
     isBacktestResult,
     signal,
   );
+}
+
+
+// ----------------------------------------------------------------------
+// Paper trading
+//
+// The only write calls in this client. Every one of them acts on simulated
+// state: no order reaches an exchange, and the backend holds no credential
+// that could send one.
+// ----------------------------------------------------------------------
+
+function isPaperAccount(value: unknown): value is PaperAccount {
+  return (
+    isRecord(value) &&
+    hasString(value, "account_id") &&
+    hasString(value, "balance") &&
+    hasString(value, "equity") &&
+    hasString(value, "durability_notice") &&
+    Array.isArray(value["positions"]) &&
+    isRecord(value["session"])
+  );
+}
+
+function isPaperOrderResult(value: unknown): value is PaperOrderResult {
+  return (
+    isRecord(value) &&
+    typeof value["accepted"] === "boolean" &&
+    isRecord(value["order"]) &&
+    isPaperAccount(value["account"])
+  );
+}
+
+function isPaperTickResult(value: unknown): value is PaperTickResult {
+  return (
+    isRecord(value) &&
+    isPaperAccount(value["account"]) &&
+    Array.isArray(value["closed_trades"]) &&
+    hasString(value, "detail")
+  );
+}
+
+function isPaperMethod(value: unknown): value is PaperMethod {
+  return (
+    isRecord(value) &&
+    hasString(value, "label") &&
+    hasString(value, "disclaimer") &&
+    Array.isArray(value["assumptions"]) &&
+    Array.isArray(value["not_modelled"])
+  );
+}
+
+export function getPaperMethod(signal?: AbortSignal): Promise<PaperMethod> {
+  return request("/api/v1/paper/method", isPaperMethod, signal);
+}
+
+export function getPaperAccount(signal?: AbortSignal): Promise<PaperAccount> {
+  return request("/api/v1/paper/account", isPaperAccount, signal);
+}
+
+export interface PaperOrderParams {
+  symbol: string;
+  side: "BUY" | "SELL";
+  margin?: string;
+  quantity?: string;
+  leverage: string;
+  stopLossPercent?: string;
+  takeProfitPercent?: string;
+  trailingStopPercent?: string;
+  clientOrderId?: string;
+}
+
+export function submitPaperOrder(
+  params: PaperOrderParams,
+  signal?: AbortSignal,
+): Promise<PaperOrderResult> {
+  const body: Record<string, unknown> = {
+    symbol: params.symbol,
+    side: params.side,
+    leverage: params.leverage,
+  };
+  // Optional fields are omitted rather than sent empty, so the backend sees
+  // "not configured" instead of a value it has to interpret.
+  if (params.margin) body["margin"] = params.margin;
+  if (params.quantity) body["quantity"] = params.quantity;
+  if (params.stopLossPercent) body["stop_loss_percent"] = params.stopLossPercent;
+  if (params.takeProfitPercent) body["take_profit_percent"] = params.takeProfitPercent;
+  if (params.trailingStopPercent) body["trailing_stop_percent"] = params.trailingStopPercent;
+  if (params.clientOrderId) body["client_order_id"] = params.clientOrderId;
+
+  return request("/api/v1/paper/orders", isPaperOrderResult, signal, body);
+}
+
+export function tickPaper(signal?: AbortSignal): Promise<PaperTickResult> {
+  return request("/api/v1/paper/tick", isPaperTickResult, signal, {});
+}
+
+export function closePaperPosition(
+  symbol: string,
+  signal?: AbortSignal,
+): Promise<PaperOrderResult> {
+  return request(
+    `/api/v1/paper/positions/${encodeURIComponent(symbol)}/close`,
+    isPaperOrderResult,
+    signal,
+    {},
+  );
+}
+
+export function resetPaperAccount(
+  startingBalance?: string,
+  signal?: AbortSignal,
+): Promise<PaperAccount> {
+  return request(
+    "/api/v1/paper/reset",
+    isPaperAccount,
+    signal,
+    startingBalance ? { starting_balance: startingBalance } : {},
+  );
+}
+
+export function setPaperEmergencyStop(
+  engaged: boolean,
+  reason: string,
+  signal?: AbortSignal,
+): Promise<PaperAccount> {
+  return request("/api/v1/paper/emergency-stop", isPaperAccount, signal, { engaged, reason });
 }

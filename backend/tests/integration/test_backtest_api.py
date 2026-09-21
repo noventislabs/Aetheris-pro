@@ -8,6 +8,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from fastapi.testclient import TestClient
 from tests.fixtures import binance_payloads as payloads
+from tests.fixtures.invariants import assert_route_surface
 from tests.fixtures.transport import RoutingHandler, json_route, raw_route, status_route
 
 from aetheris.adapters.exchange.binance import endpoints
@@ -290,9 +291,8 @@ def test_empty_history_is_unavailable_not_a_zero_result(handler: RoutingHandler)
 
 
 def test_backtest_adds_no_write_route(client: TestClient) -> None:
-    paths = client.get("/openapi.json").json()["paths"]
-    for path, operations in paths.items():
-        assert set(operations) <= {"get"}, f"{path} exposes a non-GET method"
+    """A backtest computes and returns; it persists nothing and places nothing."""
+    assert_route_surface(client)
 
 
 def test_capabilities_report_the_backtester_as_available(client: TestClient) -> None:
@@ -301,7 +301,6 @@ def test_capabilities_report_the_backtester_as_available(client: TestClient) -> 
     assert by_key["backtest.engine"]["status"] == "AVAILABLE"
     # Still unbuilt, still unclaimed.
     assert by_key["optimize.hyperparameters"]["status"] == "PLANNED"
-    assert by_key["paper.engine"]["status"] == "PLANNED"
     assert by_key["risk.engine"]["status"] == "PLANNED"
     assert by_key["execution.live"]["status"] == "PLANNED"
 

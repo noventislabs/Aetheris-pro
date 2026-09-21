@@ -203,3 +203,115 @@ def test_strategy_registry_is_a_fixed_tuple() -> None:
     from aetheris.analysis.strategies.registry import STRATEGY_KEYS
 
     assert STRATEGY_KEYS == ("trend_momentum",)
+
+
+# ----------------------------------------------------------------------
+# Phase 6: the paper engine must stay incapable of becoming live trading
+# ----------------------------------------------------------------------
+
+ENGINES_ROOT = PACKAGE_ROOT / "engines"
+
+#: The engine is handed prices and does arithmetic. It may use core, domain
+#: and analysis, and nothing that could reach a network or a venue. That is
+#: what makes it impossible for a bug in simulated execution to become a real
+#: order, rather than merely unlikely.
+ENGINE_FORBIDDEN = FORBIDDEN_PREFIXES
+
+
+def engine_source_files() -> list[pathlib.Path]:
+    return sorted(ENGINES_ROOT.rglob("*.py"))
+
+
+def test_there_are_engine_modules_to_check() -> None:
+    assert len(engine_source_files()) >= 5
+
+
+@pytest.mark.parametrize("path", engine_source_files(), ids=lambda p: p.name)
+def test_engines_layer_is_pure(path: pathlib.Path) -> None:
+    offenders = {module for module in imported_modules(path) if module.startswith(ENGINE_FORBIDDEN)}
+    assert not offenders, (
+        f"{path.relative_to(PACKAGE_ROOT)} imports {sorted(offenders)}; the paper "
+        "engine must have no route to a transport, a framework or a venue"
+    )
+
+
+def test_venue_names_do_not_leak_into_the_engine() -> None:
+    for path in engine_source_files():
+        source = path.read_text(encoding="utf-8").lower()
+        assert "binance" not in source, (
+            f"{path.relative_to(PACKAGE_ROOT)} mentions a specific venue; the paper "
+            "engine simulates against prices, not against a named exchange"
+        )
+
+
+@pytest.mark.parametrize(
+    "token",
+    [
+        "api_key",
+        "apikey",
+        "api_secret",
+        "secret_key",
+        "signature",
+        "hmac",
+        "withdraw",
+        "X-MBX-APIKEY",
+    ],
+)
+def test_paper_engine_names_no_credential_or_withdrawal_concept(token: str) -> None:
+    """Paper trading needs no credential, so none may appear even as a name.
+
+    A field called ``api_key`` on a simulated order would be the first step to
+    one being read, and withdrawal permissions must never be required by
+    anything in this system, in any mode.
+    """
+    for path in engine_source_files():
+        source = path.read_text(encoding="utf-8").lower()
+        assert token.lower() not in source, f"{path.relative_to(PACKAGE_ROOT)} names {token}"
+
+
+def test_no_testnet_or_live_execution_path_exists() -> None:
+    """Phase 6 is paper only. Nothing may reference a venue trading host."""
+    banned = ("testnet.binance", "testnet.binancefuture", "fapi.binance.com/fapi/v1/order")
+    for path in PACKAGE_ROOT.rglob("*.py"):
+        source = path.read_text(encoding="utf-8").lower()
+        for token in banned:
+            assert token not in source, f"{path.relative_to(PACKAGE_ROOT)} references {token}"
+
+
+def test_only_the_paper_router_declares_a_write_route() -> None:
+    """Asserted against the source, not just the served OpenAPI document.
+
+    An endpoint added to another router with the decorator commented out, or
+    behind a feature flag, would not appear in the served document but is
+    exactly the change worth catching at review time.
+    """
+    for path in sorted((PACKAGE_ROOT / "api").rglob("*.py")):
+        source = path.read_text(encoding="utf-8")
+        writes = [
+            verb
+            for verb in ("router.post", "router.put", "router.patch", "router.delete")
+            if verb in source
+        ]
+        if path.name == "paper.py":
+            assert writes == ["router.post"], (
+                "the paper router may declare POST routes and no other verb"
+            )
+            continue
+        assert not writes, (
+            f"{path.relative_to(PACKAGE_ROOT)} declares {writes}; state-changing "
+            "routes exist only under the paper namespace"
+        )
+
+
+def test_the_trading_port_still_has_no_implementation_after_paper_shipped() -> None:
+    """The guarantee that makes paper trading structurally safe.
+
+    A paper order is a record in memory because there is nothing to send it
+    to -- not because a flag says not to send it.
+    """
+    from aetheris.engines.paper.engine import PaperEngine
+
+    engine = PaperEngine.__new__(PaperEngine)
+    assert not isinstance(engine, TradingPort)
+    for method in ("create_order", "cancel_order", "get_balance", "get_positions"):
+        assert not hasattr(BinanceFuturesMarketDataAdapter, method)

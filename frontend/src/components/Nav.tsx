@@ -15,11 +15,11 @@ const BUILT = [
   { href: "/markets", label: "Markets" },
   { href: "/scanner", label: "Scanner" },
   { href: "/backtest", label: "Backtest" },
+  { href: "/paper", label: "Paper Trading" },
 ] as const;
 
 /** Phase in which each section is scheduled — shown so the gap is explicit. */
 const PLANNED = [
-  { label: "Paper Trading", phase: 6 },
   { label: "Falcon", phase: 9 },
   { label: "Watchlist", phase: 3 },
   { label: "Account", phase: 1 },

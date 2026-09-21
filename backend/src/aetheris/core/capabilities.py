@@ -30,7 +30,7 @@ class CapabilityStatus(StrEnum):
 #: Phases whose work is merged and tested. A capability may only be marked
 #: AVAILABLE if its phase appears here, which keeps the registry from
 #: drifting ahead of delivery one optimistic edit at a time.
-DELIVERED_PHASES: frozenset[int] = frozenset({0, 2, 3, 4, 5})
+DELIVERED_PHASES: frozenset[int] = frozenset({0, 2, 3, 4, 5, 6})
 
 
 class Capability(BaseModel):
@@ -219,9 +219,38 @@ CAPABILITIES: tuple[Capability, ...] = (
     Capability(
         key="paper.engine",
         name="Paper trading engine",
-        status=CapabilityStatus.PLANNED,
+        status=CapabilityStatus.AVAILABLE,
         phase=6,
-        detail="Simulated fills, fees and PnL. Places no real orders. Not started.",
+        detail=(
+            "Simulated orders, fills, fees, positions and PnL against real public "
+            "market data. Every entry passes a risk gate that returns a named "
+            "RISK_REJECTED_* code. Places NO real order: no venue order endpoint is "
+            "reachable, no credential exists, and no testnet or live path is wired. "
+            "Fills are all-or-nothing and management is poll-driven."
+        ),
+    ),
+    Capability(
+        key="paper.persistence",
+        name="Paper state durability",
+        status=CapabilityStatus.PARTIAL,
+        phase=6,
+        detail=(
+            "PAPER STATE IS IN-MEMORY AND RESETS ON RESTART. Balances, positions, "
+            "orders and history live in the server process only. The repository "
+            "interface is in place so durable storage is a new implementation rather "
+            "than a rewrite, but it needs the database from phase 1."
+        ),
+    ),
+    Capability(
+        key="paper.autonomous",
+        name="Autonomous paper trading",
+        status=CapabilityStatus.PLANNED,
+        phase=7,
+        detail=(
+            "A loop that opens and closes paper positions from strategy signals "
+            "without a human. Not built, and not switchable on: autonomous trading "
+            "is off and there is no code path that turns it on."
+        ),
     ),
     Capability(
         key="risk.leverage_policy",

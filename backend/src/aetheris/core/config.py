@@ -207,6 +207,35 @@ class BacktestSettings(BaseSettings):
     max_candle_limit: int = Field(default=1500, ge=60, le=1500)
 
 
+class PaperTradingSettings(BaseSettings):
+    """Costs and bounds for the paper simulation.
+
+    Separate from ``RiskSettings`` because these describe the *simulator*,
+    not the risk envelope. The risk limits apply identically whichever mode
+    they guard; a modelled taker fee applies only to a simulated fill.
+    """
+
+    model_config = SettingsConfigDict(env_prefix="AETHERIS_PAPER_", extra="ignore")
+
+    taker_fee_bps: Decimal = Field(
+        default=Decimal("5"),
+        ge=0,
+        le=100,
+        description="Per side, on notional. Matches the backtest default so the two "
+        "simulations are comparable.",
+    )
+    slippage_bps: Decimal = Field(
+        default=Decimal("2"),
+        ge=0,
+        le=100,
+        description="Applied only when the venue publishes no bid/ask to fill against",
+    )
+    #: In-memory history is bounded because the target machine is small and
+    #: these lists would otherwise grow for as long as the process runs.
+    max_order_log: int = Field(default=200, ge=10, le=5000)
+    max_trade_log: int = Field(default=200, ge=10, le=5000)
+
+
 class Settings(BaseSettings):
     """Top-level application settings."""
 
@@ -250,6 +279,7 @@ class Settings(BaseSettings):
     scanner: ScannerSettings = Field(default_factory=ScannerSettings)
     analysis: AnalysisSettings = Field(default_factory=AnalysisSettings)
     backtest: BacktestSettings = Field(default_factory=BacktestSettings)
+    paper: PaperTradingSettings = Field(default_factory=PaperTradingSettings)
 
     @model_validator(mode="after")
     def _live_requires_two_switches(self) -> Self:

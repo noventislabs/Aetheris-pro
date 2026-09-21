@@ -7,6 +7,7 @@ from collections.abc import Iterator
 import pytest
 from fastapi.testclient import TestClient
 from tests.fixtures import binance_payloads as payloads
+from tests.fixtures.invariants import assert_route_surface
 from tests.fixtures.transport import RoutingHandler, json_route, raw_route, status_route
 
 from aetheris.adapters.exchange.binance import endpoints
@@ -268,10 +269,8 @@ def test_capabilities_report_the_scanner_as_available(client: TestClient) -> Non
     assert by_key["analysis.indicators"]["status"] == "AVAILABLE"
     assert by_key["analysis.smc"]["status"] == "PLANNED"
     assert by_key["ai.analysis"]["status"] == "PLANNED"
-    assert by_key["paper.engine"]["status"] == "PLANNED"
+    assert by_key["risk.engine"]["status"] == "PLANNED"
 
 
 def test_scanner_exposes_no_write_route(client: TestClient) -> None:
-    paths = client.get("/openapi.json").json()["paths"]
-    for path, operations in paths.items():
-        assert set(operations) <= {"get"}, f"{path} exposes a non-GET method"
+    assert_route_surface(client)

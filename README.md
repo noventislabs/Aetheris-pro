@@ -2,17 +2,20 @@
 
 Professional crypto trading and quantitative research platform.
 
-> **Phases 0, 2, 3, 4 and 5 of 10 — foundation, market data, scanner,
-> terminal, indicators, strategy analysis and backtesting.**
-> This build places **no orders in any mode**. It has no database, no
-> strategies and no trading engines. What exists is the foundation
-> (configuration, exact money arithmetic, data provenance, the error and risk
-> vocabulary, observability) and a **read-only** Binance USDT-M Futures market-
-> data layer: dynamic symbol discovery, tickers and OHLCV, each carrying
-> provenance and a freshness status, plus a bounded market scanner with a
-> deterministic — and fully published — Market Opportunity Score, eleven
-> technical indicators, a rule-based strategy analysis layer, and a
-> historical backtesting engine.
+> **Phases 0, 2, 3, 4, 5 and 6 of 10 — foundation, market data, scanner,
+> terminal, indicators, strategy analysis, backtesting and paper trading.**
+> This build sends **no order to any exchange in any mode**. It holds no API
+> credential, has no database, and has no testnet or live execution path. What
+> exists is the foundation (configuration, exact money arithmetic, data
+> provenance, the error and risk vocabulary, observability), a **read-only**
+> Binance USDT-M Futures market-data layer, a bounded market scanner with a
+> deterministic and fully published Market Opportunity Score, eleven technical
+> indicators, a rule-based strategy analysis layer, a historical backtesting
+> engine, and a **paper trading engine** that simulates fills against real
+> observed prices behind a risk gate that has final authority.
+>
+> Paper state is **in-memory and resets on restart** — said on every response,
+> not buried here.
 >
 > Ask the running service what it can do: `GET /api/v1/system/capabilities`.
 
@@ -59,6 +62,11 @@ These are enforced by code and tests, not by convention:
 9. **A backtest is a simulation, not a forecast.** Signals fill at the next
    bar's open, intrabar ambiguity always resolves against the trade, and every
    result carries its assumptions, its warnings and what was not modelled.
+10. **Paper trading is simulation, not testnet.** No order reaches a venue, no
+    credential exists, and the safety is structural: nothing implements
+    `TradingPort`, no venue order path is named anywhere in the package, and
+    the engine cannot import a transport, framework or adapter. A refusal
+    carries a `RISK_REJECTED_*` code and cannot be overridden by any caller.
 
 ## Trading defaults
 
@@ -75,8 +83,11 @@ These are enforced by code and tests, not by convention:
 
 ## API
 
-All routes are `GET`. There is no non-GET route anywhere in this build, and a
-test asserts it.
+Reads are `GET`. **Writes exist only under `/paper`**, where they act on
+in-memory simulation state — see [docs/paper-trading.md](docs/paper-trading.md)
+§10 for why that invariant replaced the flat GET-only one. There is no PUT,
+PATCH or DELETE anywhere, no route can reach a venue order endpoint, and tests
+assert all of it.
 
 | Endpoint | Purpose |
 |---|---|
@@ -97,6 +108,14 @@ test asserts it.
 | `/api/v1/analysis/{symbol}/strategy` | Rule-based bias — analysis only |
 | `/api/v1/backtest/method` | Fill model, and what it does not model |
 | `/api/v1/backtest/{symbol}` | Historical simulation over past candles |
+| `/api/v1/paper/method` | Paper fill model, gaps, refusal vocabulary |
+| `/api/v1/paper/account` | Balance, equity, positions, day session |
+| `/api/v1/paper/reconciliation` | `NOT_APPLICABLE` — nothing external to check |
+| `POST /api/v1/paper/orders` | Submit a **simulated** order |
+| `POST /api/v1/paper/tick` | One position-management pass |
+| `POST /api/v1/paper/positions/{symbol}/close` | Close at the observed price |
+| `POST /api/v1/paper/emergency-stop` | Block or unblock new entries |
+| `POST /api/v1/paper/reset` | Discard the paper account |
 
 See [docs/exchange.md](docs/exchange.md) for the exchange layer in detail.
 
@@ -128,11 +147,11 @@ backend/           FastAPI service (Python 3.12+)
     domain/        enums and value objects (pure)
     api/v1/        HTTP surface
     adapters/      exchange + persistence integrations   (phase 1+)
-    engines/       strategy, risk, backtest, paper, order (phase 4+)
+    engines/       paper trading engine + risk gate      (phase 6)
   tests/           unit + integration
 docs/              architecture, setup, ADRs
-frontend/          Next.js terminal (read-only)
-  src/app/         markets · scanner · backtest routes
+frontend/          Next.js terminal
+  src/app/         markets · scanner · backtest · paper routes
   src/components/  chart, table, search, data states
   src/lib/         typed API client, formatting, polling hook
 ```
@@ -153,6 +172,8 @@ frontend/          Next.js terminal (read-only)
   the leverage request/approval architecture
 - [Backtesting](docs/backtesting.md) — the fill model, its pessimism rules,
   the metrics and what is deliberately not simulated
+- [Paper trading](docs/paper-trading.md) — the risk gate, the fill model,
+  paper vs testnet vs live, and why leverage stays at 1x
 - [Setup](docs/setup.md) — environment, commands, quality gates
 - [ADRs](docs/adr/) — recorded decisions, including the open database question
 

@@ -8,6 +8,7 @@ from datetime import timedelta
 import pytest
 from fastapi.testclient import TestClient
 from tests.fixtures import binance_payloads as payloads
+from tests.fixtures.invariants import assert_route_surface
 from tests.fixtures.transport import RoutingHandler, json_route, raw_route, status_route
 
 from aetheris.adapters.exchange.binance import endpoints
@@ -257,12 +258,16 @@ def test_capabilities_now_report_market_data_as_available(
     assert by_key["execution.live"]["status"] == "PLANNED"
 
 
-def test_no_order_route_exists(market_client: TestClient) -> None:
-    """The read-only guarantee, asserted at the HTTP surface."""
+def test_no_venue_order_route_exists(market_client: TestClient) -> None:
+    """The read-only guarantee, asserted at the HTTP surface.
+
+    Phase 6 added writes, so the assertion narrowed rather than disappearing:
+    a state-changing route may exist only under the paper namespace, and the
+    only path naming an order is the simulated one.
+    """
+    assert_route_surface(market_client)
     paths = market_client.get("/openapi.json").json()["paths"]
-    for path, operations in paths.items():
-        assert set(operations) <= {"get"}, f"{path} exposes a non-GET method"
-    assert not any("order" in path for path in paths)
+    assert [p for p in paths if "order" in p] == ["/api/v1/paper/orders"]
 
 
 def test_forming_candle_reports_a_negative_age(market_client: TestClient) -> None:
@@ -301,8 +306,14 @@ def test_venue_server_time_is_surfaced_but_not_used_for_freshness(
         assert ticker["value"] is not None
 
 
-def test_cors_does_not_advertise_write_methods(market_client: TestClient) -> None:
-    """CORS must not offer verbs this build has no route for."""
+def test_cors_advertises_only_the_verbs_that_exist(market_client: TestClient) -> None:
+    """CORS must not offer verbs this build has no route for.
+
+    POST arrives with the phase 6 paper routes and is advertised because those
+    routes exist. PUT, PATCH and DELETE are not, because none does -- a
+    permissive CORS policy written in advance of the endpoints is how a browser
+    ends up able to reach something nobody meant to expose.
+    """
     response = market_client.options(
         "/api/v1/markets/status",
         headers={
@@ -312,5 +323,6 @@ def test_cors_does_not_advertise_write_methods(market_client: TestClient) -> Non
     )
     allowed = response.headers.get("access-control-allow-methods", "")
     assert "GET" in allowed
-    for verb in ("POST", "PUT", "PATCH", "DELETE"):
+    assert "POST" in allowed
+    for verb in ("PUT", "PATCH", "DELETE"):
         assert verb not in allowed

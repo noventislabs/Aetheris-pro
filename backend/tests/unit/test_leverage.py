@@ -285,8 +285,14 @@ def test_decision_always_carries_the_no_execution_note() -> None:
 # ----------------------------------------------------------------------
 
 
-def test_strategy_results_always_reject_leverage_in_this_build() -> None:
-    """Phase 4 has no venue ceiling and no risk engine, so nothing is approved."""
+def test_strategy_results_never_approve_leverage_in_this_build() -> None:
+    """No venue ceiling and no risk engine, so nothing above 1x is approvable.
+
+    A candidate of exactly 1x would resolve at the domain minimum (see below),
+    which is why the assertion is "never *leveraged*" rather than "always
+    rejected" -- 1x is not leverage. This fixture produces no directional bias,
+    so it never reaches that question.
+    """
     from datetime import UTC, datetime, timedelta
 
     from aetheris.analysis.strategies.registry import evaluate_from_candles
@@ -309,14 +315,17 @@ def test_strategy_results_always_reject_leverage_in_this_build() -> None:
     result = evaluate_from_candles(candles, symbol="TESTUSDT", timeframe=Timeframe.H1)
 
     assert result.leverage is not None
-    assert result.leverage.outcome is LeverageOutcome.REJECTED
-    assert result.leverage.approved_leverage is None
     # Never guessed from the architectural range.
     assert result.leverage.exchange_max_leverage is None
+    approved = result.leverage.approved_leverage
+    assert approved is None or approved == Decimal(1), (
+        "nothing above the domain minimum can be approved without a venue ceiling and a risk engine"
+    )
     assert result.leverage.reason in {
         LeverageReason.EXCHANGE_MAX_UNKNOWN,
         LeverageReason.NO_DIRECTIONAL_BIAS,
         LeverageReason.INSUFFICIENT_DATA,
+        LeverageReason.APPROVED_AT_DOMAIN_MINIMUM,
     }
 
 
@@ -521,3 +530,84 @@ def test_candidate_basis_names_its_real_inputs() -> None:
     assert "deterministic strategy-condition agreement" in basis
     assert "leverage candidate" in basis
     assert "not an authorisation" in basis
+
+
+# ----------------------------------------------------------------------
+# The domain minimum: the one value an unknown ceiling cannot block
+# ----------------------------------------------------------------------
+
+
+def test_one_times_resolves_without_knowing_either_ceiling() -> None:
+    """min(1, any valid ceiling) is 1, so the missing values change nothing.
+
+    This is what makes paper trading possible at all in a build with no venue
+    ceiling and no risk engine. It is arithmetic over the declared domain, not
+    an assumption about a venue.
+    """
+    decision = resolve_leverage(
+        request("1"),
+        exchange_max_leverage=None,
+        risk_max_leverage=None,
+        risk_engine_available=False,
+    )
+    assert decision.outcome is LeverageOutcome.APPROVED
+    assert decision.reason is LeverageReason.APPROVED_AT_DOMAIN_MINIMUM
+    assert decision.approved_leverage == Decimal(1)
+    assert decision.binding_constraint == "domain_minimum"
+    assert "unlevered" in decision.detail
+
+
+@pytest.mark.parametrize("requested", ["1.0001", "1.5", "2", "3", "25", "500"])
+def test_anything_above_the_minimum_still_fails_closed(requested: str) -> None:
+    """The exception is exactly 1x and nothing adjacent to it."""
+    decision = resolve_leverage(
+        request(requested),
+        exchange_max_leverage=None,
+        risk_max_leverage=None,
+        risk_engine_available=False,
+    )
+    assert decision.outcome is LeverageOutcome.REJECTED
+    assert decision.approved_leverage is None
+    assert decision.reason is LeverageReason.EXCHANGE_MAX_UNKNOWN
+
+
+def test_the_minimum_shortcut_does_not_mask_a_malformed_ceiling() -> None:
+    """A supplied-but-broken ceiling is a defect to report, not to route around."""
+    decision = resolve_leverage(
+        request("1"),
+        exchange_max_leverage=Decimal(0),
+        risk_max_leverage=None,
+        risk_engine_available=False,
+    )
+    assert decision.outcome is LeverageOutcome.REJECTED
+    assert decision.reason is LeverageReason.EXCHANGE_MAX_INVALID
+
+
+def test_a_fully_known_chain_still_reports_approved_in_full_at_one_times() -> None:
+    """The shortcut only applies where the chain could not complete."""
+    decision = resolve_leverage(
+        request("1"),
+        exchange_max_leverage=Decimal(20),
+        risk_max_leverage=Decimal(3),
+        risk_engine_available=True,
+    )
+    assert decision.reason is LeverageReason.APPROVED_IN_FULL
+    assert decision.approved_leverage == Decimal(1)
+
+
+def test_the_minimum_approval_grants_no_borrowing() -> None:
+    """The safety property behind the shortcut, stated as an assertion.
+
+    At 1x margin equals notional, so the approval cannot produce a leveraged
+    position however the caller sizes it.
+    """
+    decision = resolve_leverage(
+        request("1"),
+        exchange_max_leverage=None,
+        risk_max_leverage=None,
+        risk_engine_available=False,
+    )
+    assert decision.approved_leverage is not None
+    notional = Decimal("57.25")
+    margin = notional / decision.approved_leverage
+    assert margin == notional

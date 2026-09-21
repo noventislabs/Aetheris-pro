@@ -41,7 +41,9 @@ Route (app)                    Size  First Load JS
 | `/` | Redirects to `/markets` |
 | `/markets` | **Built** — symbol search, timeframes, chart, ticker header |
 | `/scanner` | **Built** — bounded table with sort, filter, paging |
-| Paper Trading, Backtest, Falcon, Watchlist, Account | **Not built** |
+| `/backtest` | **Built** — config form, metrics, equity curve, trade list |
+| `/paper` | **Built** — order entry, positions, trades, order history |
+| Falcon, Watchlist, Account | **Not built** |
 
 Unbuilt sections appear in the navigation as **disabled items tagged
 PLANNED**, with a tooltip naming the phase they are scheduled for. They are not
@@ -192,13 +194,39 @@ pnpm test        # vitest run
 ```
 
 The backend must be running at `NEXT_PUBLIC_API_BASE_URL` (default
-`http://127.0.0.1:8000`). Its CORS allowlist includes `http://localhost:3000`
-and permits `GET, OPTIONS` only.
+`http://127.0.0.1:8000`). Its CORS allowlist includes both `http://localhost:3000`
+and `http://127.0.0.1:3000` — a browser treats them as different origins, and
+allowing only one silently breaks every request from the other. It permits
+`GET, POST, OPTIONS`: `POST` arrived with the paper trading routes and nothing
+else, so there is still no `PUT`, `PATCH` or `DELETE`.
 
-## 11. Not implemented
+## 11. The paper trading desk
 
-- Watchlist (server-side), Paper Trading, Backtest, Falcon, Account pages
-- Indicator overlays and SMC overlays (phase 4)
+The only page that writes. Three things are permanent fixtures rather than
+dismissible notices, because the moment a user forgets which mode they are in is
+the moment the numbers start meaning something they do not mean:
+
+- the `PAPER / SIMULATION ONLY / NO REAL ORDER` badge;
+- `PAPER STATE: IN-MEMORY — RESETS ON RESTART`;
+- that management runs **only while the page is open** — there is no
+  server-side loop, so closing the tab stops stops being evaluated.
+
+Refusals are rendered as prominently as fills, with their `RISK_REJECTED_*`
+code and the full leverage constraint chain. A risk limit that fires silently
+teaches a user that limits do not exist. Refused orders stay in the order
+history for the same reason.
+
+The header badge reads **NO REAL ORDERS**, not `READ-ONLY`. That changed in
+phase 6: paper trading writes, so the older claim stopped being true, and a
+badge that overstates the guarantee is worse than one that states the real one
+precisely.
+
+Detail in [paper-trading.md](paper-trading.md).
+
+## 12. Not implemented
+
+- Watchlist (server-side), Falcon, Account pages
+- SMC overlays
 - Depth/orderbook, trades feed, funding, open interest
 - Websocket streaming — REST polling only, per the RAM budget
-- Any order entry, in any mode
+- Real order entry, in any mode — the paper desk sends nothing to any exchange

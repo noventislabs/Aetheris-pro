@@ -10,6 +10,7 @@ from aetheris.core.errors import UpstreamUnavailableError
 from aetheris.services.analysis import AnalysisService
 from aetheris.services.backtest import BacktestService
 from aetheris.services.market_data import MarketDataService
+from aetheris.services.paper import PaperTradingService
 from aetheris.services.scanner import ScannerService
 
 
@@ -59,3 +60,19 @@ def get_backtest_service(request: Request) -> BacktestService:
 
 
 BacktestDep = Annotated[BacktestService, Depends(get_backtest_service)]
+
+
+def get_paper_service(request: Request) -> PaperTradingService:
+    """Resolve the process-wide paper trading service.
+
+    Process-wide is load-bearing here rather than merely efficient: the paper
+    account lives in this service's repository, so a per-request instance would
+    hand every caller a fresh 100 USDT and no positions.
+    """
+    service = getattr(request.app.state, "paper_service", None)
+    if not isinstance(service, PaperTradingService):
+        raise UpstreamUnavailableError("Paper trading service is not configured")
+    return service
+
+
+PaperDep = Annotated[PaperTradingService, Depends(get_paper_service)]

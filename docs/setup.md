@@ -46,7 +46,7 @@ server-side and are never exposed to the frontend.
 
 ## Quality gates
 
-All four must pass before a phase is considered complete:
+All of these must pass before a phase is considered complete:
 
 ```bash
 cd backend
@@ -54,6 +54,56 @@ cd backend
 .venv/Scripts/python.exe -m ruff check .       # lint
 .venv/Scripts/python.exe -m ruff format --check .
 .venv/Scripts/python.exe -m mypy               # strict type check
+
+cd ../frontend
+pnpm test                                      # vitest
+pnpm lint                                      # eslint
+pnpm typecheck                                 # tsc --noEmit
+pnpm build                                     # next build
+```
+
+From phase 3 onward a phase that touches the terminal also needs **actual
+browser verification** — the page loaded in a real browser at several viewport
+widths, with a real backend behind it. Three defects in this project were
+invisible to every test and visible immediately in a browser: a CORS origin
+mismatch between `localhost` and `127.0.0.1`, a stale build served by an
+orphaned dev server, and a freshness rule that blanked every price on the
+terminal.
+
+## Paper trading settings
+
+Paper trading is enabled by default and simulates only — no order is sent to
+any exchange and no credential is required or accepted.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `AETHERIS_PAPER_TRADING_ENABLED` | `true` | Whether paper mode may be entered |
+| `AETHERIS_RISK_PAPER_STARTING_BALANCE` | `100` | Opening balance, USDT |
+| `AETHERIS_RISK_DAILY_PROFIT_TARGET` | `20` | Locks new entries for the UTC day |
+| `AETHERIS_RISK_DAILY_LOSS_LIMIT` | `-10` | Locks new entries for the UTC day |
+| `AETHERIS_RISK_MAX_OPEN_POSITIONS` | `5` | |
+| `AETHERIS_RISK_MAX_DATA_AGE_SECONDS` | `30` | Older than this cannot fill an order |
+| `AETHERIS_PAPER_TAKER_FEE_BPS` | `5` | Per side, on notional |
+| `AETHERIS_PAPER_SLIPPAGE_BPS` | `2` | Only when the venue publishes no book |
+
+**Paper state is in-memory and is lost when the backend restarts.** That is
+reported on every account response and in the capability registry; it is not a
+bug to be worked around but the honest state of phase 6.
+
+### Sizing on a 100 USDT account
+
+Venue filters are real and are honoured rather than approximated, which has a
+practical consequence worth knowing before the first order is refused:
+BTCUSDT's step size is 0.001 BTC — roughly 80 USDT per increment — so a
+BTCUSDT position at 1x needs about 82+ USDT of margin, and anything smaller
+truncates to zero and is refused with `RISK_REJECTED_EXCHANGE_PRECISION`.
+ETHUSDT publishes a 20 USDT minimum notional.
+
+Either pick an instrument where `step_size × price` is small, or raise the
+balance:
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/v1/paper/reset   -H "Content-Type: application/json" -d '{"starting_balance": "1000"}'
 ```
 
 ## Live market-data smoke test (opt-in)

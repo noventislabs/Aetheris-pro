@@ -20,10 +20,14 @@ from aetheris.api.exception_handlers import register_exception_handlers
 from aetheris.api.middleware import RequestContextMiddleware, SecurityHeadersMiddleware
 from aetheris.api.v1.router import api_router
 from aetheris.core.config import Settings, get_settings
+from aetheris.core.freshness import utcnow
 from aetheris.core.logging import configure_logging, get_logger
+from aetheris.engines.paper.engine import PaperEngine, PaperEngineConfig
+from aetheris.engines.paper.store import InMemoryPaperRepository
 from aetheris.services.analysis import AnalysisService
 from aetheris.services.backtest import BacktestService
 from aetheris.services.market_data import MarketDataService
+from aetheris.services.paper import PaperTradingService
 from aetheris.services.scanner import ScannerService
 
 _log = get_logger("app")
@@ -47,6 +51,37 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # Release the exchange connection pool even if startup partly failed.
         await app.state.market_data_service.aclose()
         _log.info("shutdown")
+
+
+def _build_paper_service(market_data: MarketDataService, settings: Settings) -> PaperTradingService:
+    """Construct the paper engine over in-memory storage.
+
+    The repository is the seam that keeps this honest. Swapping
+    ``InMemoryPaperRepository`` for a database-backed one is the whole of what
+    durable paper state requires -- the engine, the service and the API do not
+    change. Until that exists, the account resets with the process and every
+    response says so.
+    """
+    repository = InMemoryPaperRepository(
+        starting_balance=settings.risk.paper_starting_balance, now=utcnow()
+    )
+    engine = PaperEngine(
+        repository,
+        PaperEngineConfig(
+            starting_balance=settings.risk.paper_starting_balance,
+            daily_profit_target=settings.risk.daily_profit_target,
+            daily_loss_limit=settings.risk.daily_loss_limit,
+            max_open_positions=settings.risk.max_open_positions,
+            max_position_notional=settings.risk.max_position_notional,
+            max_portfolio_exposure=settings.risk.max_portfolio_exposure,
+            max_data_age_seconds=settings.risk.max_data_age_seconds,
+            taker_fee_bps=settings.paper.taker_fee_bps,
+            slippage_bps=settings.paper.slippage_bps,
+            max_order_log=settings.paper.max_order_log,
+            max_trade_log=settings.paper.max_trade_log,
+        ),
+    )
+    return PaperTradingService(market_data, engine, settings)
 
 
 def create_app(
@@ -86,6 +121,7 @@ def create_app(
     app.state.scanner_service = ScannerService(exchange, settings.scanner, settings.market_data)
     app.state.analysis_service = AnalysisService(exchange, settings.analysis)
     app.state.backtest_service = BacktestService(exchange, settings.backtest)
+    app.state.paper_service = _build_paper_service(app.state.market_data_service, settings)
 
     # Middleware executes bottom-up, so RequestContextMiddleware is added last
     # and therefore runs first -- every log line below it carries a request ID.
@@ -93,10 +129,10 @@ def create_app(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
         allow_credentials=True,
-        # This build is read-only, so CORS advertises only what exists.
-        # Write methods are added back in the phase that introduces a
-        # write endpoint, not in advance of one.
-        allow_methods=["GET", "OPTIONS"],
+        # CORS advertises exactly the verbs that exist. POST arrives with the
+        # paper trading routes and nothing else: there is still no PUT, PATCH
+        # or DELETE anywhere, so none is offered.
+        allow_methods=["GET", "POST", "OPTIONS"],
         allow_headers=["Authorization", "Content-Type", "X-Correlation-ID"],
         expose_headers=["X-Request-ID", "X-Correlation-ID"],
     )

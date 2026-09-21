@@ -1,6 +1,6 @@
 # Aetheris Pro — Architecture
 
-> Status: Phase 5 (backtesting engine). This
+> Status: Phase 6 (paper trading engine). This
 > document describes the intended shape of
 > the whole system and marks clearly which parts exist today. Anything not
 > marked **implemented** is not built, and the running service reports the same
@@ -216,6 +216,52 @@ Every ambiguity resolves against the trade: signals fill at the next bar's
 open, and a bar covering both stop and target is assumed to have hit the stop.
 Detail in [backtesting.md](backtesting.md).
 
+## 9e. Paper trading (phase 6)
+
+`engines/paper/` is the first layer that holds *state* rather than computing
+over inputs, and the first that writes. Four modules, deliberately separate:
+
+| Module | Responsibility |
+|---|---|
+| `store.py` | `PaperRepository` interface + an in-memory implementation |
+| `state.py` | mutable working state, distinct from the frozen domain models |
+| `risk.py` | **the gate** — every entry refusal, with its `RISK_REJECTED_*` code |
+| `engine.py` | orders, fills, positions, management, PnL |
+
+It is pure in the same sense the analysis layer is: no HTTP client, no adapter,
+no framework, no venue name. `services/paper.py` is the only place it meets the
+network. That is why a bug in simulated execution cannot become a real order —
+there is nowhere to send one to, and nothing implements `TradingPort`.
+
+**The repository is the seam for durability.** Swapping the in-memory store for
+a database-backed one is the whole of what persistent paper state requires; the
+engine, service and API do not change. Until then, every response carries
+`PAPER STATE: IN-MEMORY — RESETS ON RESTART`.
+
+**Refusal ordering is part of the design.** Account-level refusals (mode,
+emergency stop, daily lock) are checked before the order is sized, because a
+size cannot be validated before it is computed and an incidental sizing problem
+would otherwise mask a fundamental halt. Found running against live Binance
+data; `check_authority` and three regression tests are the fix.
+
+Detail in [paper-trading.md](paper-trading.md).
+
+## 9f. The route surface, and how it changed
+
+Phases 0–5 asserted that no route uses a method other than GET. Phase 6 makes
+that false on purpose: submitting a paper order mutates server state, and a GET
+that mutates is cacheable, prefetchable and repeatable by a browser doing
+ordinary browser things.
+
+The invariant narrowed rather than disappearing. Two assertions replace it:
+
+1. **No route can reach a venue order endpoint.** No `TradingPort`
+   implementation exists, and no venue order path is named in the package —
+   asserted against the source, not just the served schema.
+2. **Writes exist only under `/paper`**, against in-memory simulation state.
+   No PUT, PATCH or DELETE exists anywhere, and CORS advertises exactly the two
+   verbs that do.
+
 ## 9a. Current implementation status
 
 | Area | Status |
@@ -242,10 +288,15 @@ Detail in [backtesting.md](backtesting.md).
 | Websockets, funding rate, open interest | **not started** |
 | Backtesting engine (fills, fees, slippage, drawdown) | implemented, tested |
 | Hyperparameter optimisation | **not started** |
-| Paper engine | **not started** (phase 6) |
+| Paper trading engine (orders, fills, positions, PnL) | implemented, tested |
+| Paper entry risk gate (`RISK_REJECTED_*` refusals) | implemented, tested |
+| Paper state persistence | **in-memory only**, resets on restart (phase 1) |
+| Autonomous paper trading | **not started** (phase 7) |
 | Risk engine, portfolio | **not started** (phase 7) |
 | Order engine, testnet, live | **not started** (phases 8, 10) |
 | AI / Falcon | **not started** (phase 9) |
-| Frontend | **not started** (phase 3) |
+| Frontend terminal (markets, scanner, backtest, paper) | implemented, tested |
 
-Nothing in this build places an order of any kind, in any mode.
+Nothing in this build sends an order to any exchange, in any mode. Paper
+orders are records in the server process, filled by arithmetic against real
+observed prices. No API credential exists anywhere in the system.

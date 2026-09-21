@@ -23,8 +23,18 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               AETHERIS<span> PRO</span>
             </div>
             <Nav />
-            <span className="tag" style={{ marginLeft: "auto" }} title="This build places no orders in any mode.">
-              READ-ONLY
+            {/*
+              Was READ-ONLY through phase 5. Paper trading writes -- to
+              simulation state -- so that claim stopped being true, and a badge
+              that overstates the guarantee is worse than one that states the
+              real one precisely.
+            */}
+            <span
+              className="tag"
+              style={{ marginLeft: "auto" }}
+              title="Paper trading simulates against real prices. No order is sent to any exchange in any mode, no API credential exists, and testnet and live execution are not built."
+            >
+              NO REAL ORDERS
             </span>
           </header>
           <main>{children}</main>

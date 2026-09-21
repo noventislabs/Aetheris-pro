@@ -112,7 +112,7 @@ Four deliberately separate fields:
 | `requested_leverage` | What analysis asked for, 1–500 | derived from ATR |
 | `exchange_max_leverage` | The venue's real per-symbol ceiling | **null — unknown** |
 | `risk_max_leverage` | The risk engine's ceiling | **null — no engine yet** |
-| `approved_leverage` | What may actually be used | **null — nothing approved** |
+| `approved_leverage` | What may actually be used | **null above 1x — see below** |
 
 ```
 approved = min(requested, exchange_max, risk_max)   -- only if all are known
@@ -136,6 +136,24 @@ Constraints are also **validated, not just checked for presence**:
 | Not a `Decimal` (int, float, str) | `*_INVALID` rejection — a float already lost precision |
 | `< 1x` (zero, negative, fractional) | `*_INVALID` rejection |
 | `> 500x` | `*_INVALID` rejection — **refused, not clamped**, because no rule declares how to reduce it |
+
+### The one exception: exactly 1x
+
+A request for exactly `LEVERAGE_MIN` resolves without the ceilings, and the
+reason is arithmetic rather than judgement. Every ceiling this domain accepts is
+at least 1x, so `min(1, any valid ceiling)` is 1 whatever the missing values turn
+out to be — learning them could not change the answer. And 1x is unlevered:
+margin equals notional, nothing is borrowed, and the liquidation this chain
+exists to prevent has no mechanism.
+
+It applies at exactly 1x, only when the chain could not otherwise complete, and
+never when a supplied ceiling is malformed. It carries its own reason code,
+`LEVERAGE_APPROVED_AT_DOMAIN_MINIMUM`, so it is never mistaken for an approval
+the full chain produced. Full reasoning in
+[ADR 0004](adr/0004-leverage-at-the-domain-minimum.md).
+
+This is what lets [paper trading](paper-trading.md) open a position at all. A
+paper request above 1x is refused exactly as it is here.
 
 ### How the candidate is derived
 

@@ -459,3 +459,171 @@ export interface BacktestResult {
   label: string;
   disclaimer: string;
 }
+
+// ----------------------------------------------------------------------
+// Paper trading
+// ----------------------------------------------------------------------
+
+export type OrderSide = "BUY" | "SELL";
+export type PositionSide = "LONG" | "SHORT";
+
+export type PaperExitReason =
+  | "MANUAL_CLOSE"
+  | "STOP_LOSS"
+  | "TAKE_PROFIT"
+  | "TRAILING_STOP"
+  | "LIQUIDATION"
+  | "SIGNAL_FLIP"
+  | "ACCOUNT_RESET";
+
+export type RiskLockState =
+  | "NONE"
+  | "DAILY_PROFIT_TARGET"
+  | "DAILY_LOSS_LIMIT"
+  | "EMERGENCY_STOP";
+
+export interface PaperFill {
+  fill_id: string;
+  price: string;
+  quantity: string;
+  fee: string;
+  filled_at: string;
+  /** Which observation the fill used — best ask, best bid, or last + slippage. */
+  price_source: string;
+  price_age_seconds: number | null;
+}
+
+export interface PaperOrder {
+  order_id: string;
+  client_order_id: string;
+  symbol: string;
+  side: OrderSide;
+  order_type: string;
+  state: string;
+  reduce_only: boolean;
+  requested_quantity: string;
+  filled_quantity: string;
+  average_fill_price: string | null;
+  fills: PaperFill[];
+  leverage: LeverageDecision | null;
+  created_at: string;
+  updated_at: string;
+  rejection_code: string | null;
+  rejection_detail: string | null;
+  idempotent_replay: boolean;
+}
+
+export interface PaperPosition {
+  position_id: string;
+  symbol: string;
+  side: PositionSide;
+  quantity: string;
+  entry_price: string;
+  notional: string;
+  margin: string;
+  approved_leverage: string;
+  entry_fee: string;
+  stop_price: string | null;
+  target_price: string | null;
+  trailing_stop_percent: string | null;
+  trail_extreme: string | null;
+  /** Null at 1x long: a level of zero is not a liquidation price. */
+  liquidation_price: string | null;
+  opened_at: string;
+  updated_at: string;
+  opening_order_id: string;
+  /** Null when the last poll found no usable price. */
+  mark_price: string | null;
+  mark_source: string | null;
+  mark_status: string | null;
+  unrealized_pnl: string | null;
+}
+
+export interface PaperTrade {
+  trade_id: string;
+  symbol: string;
+  side: PositionSide;
+  quantity: string;
+  entry_price: string;
+  exit_price: string;
+  notional: string;
+  margin: string;
+  approved_leverage: string;
+  opened_at: string;
+  closed_at: string;
+  exit_reason: PaperExitReason;
+  gross_pnl: string;
+  fees: string;
+  net_pnl: string;
+  return_percent: string;
+  balance_after: string;
+}
+
+export interface DailySession {
+  session_date: string;
+  realized_pnl: string;
+  fees: string;
+  trades_closed: number;
+  orders_submitted: number;
+  orders_rejected: number;
+  profit_target: string;
+  loss_limit: string;
+  lock_state: RiskLockState;
+  lock_reason: string | null;
+  locked_at: string | null;
+}
+
+export interface PaperAccount {
+  account_id: string;
+  mode: string;
+  created_at: string;
+  updated_at: string;
+  starting_balance: string;
+  balance: string;
+  equity: string;
+  available_balance: string;
+  margin_used: string;
+  realized_pnl: string;
+  /** Null when an open position could not be marked — never a substituted zero. */
+  unrealized_pnl: string | null;
+  total_fees: string;
+  positions: PaperPosition[];
+  open_orders: PaperOrder[];
+  recent_orders: PaperOrder[];
+  recent_trades: PaperTrade[];
+  session: DailySession;
+  autonomous_enabled: boolean;
+  durability: "IN_MEMORY" | "DURABLE";
+  durability_notice: string;
+  mark_source: string | null;
+  mark_status: string | null;
+  mark_age_seconds: number | null;
+  label: string;
+  disclaimer: string;
+}
+
+export interface PaperOrderResult {
+  accepted: boolean;
+  order: PaperOrder;
+  position: PaperPosition | null;
+  trade: PaperTrade | null;
+  account: PaperAccount;
+  detail: string | null;
+}
+
+export interface PaperTickResult {
+  account: PaperAccount;
+  closed_trades: PaperTrade[];
+  detail: string;
+}
+
+export interface PaperMethod {
+  label: string;
+  mode: string;
+  assumptions: string[];
+  not_modelled: string[];
+  rejection_codes: string[];
+  durability: string;
+  durability_notice: string;
+  disclaimer: string;
+}

@@ -22,20 +22,42 @@ def test_unknown_capability_fails_closed() -> None:
     assert get_capability("does.not.exist") is None
 
 
-def test_trading_capabilities_are_not_claimed_in_this_build() -> None:
+def test_real_execution_capabilities_are_not_claimed_in_this_build() -> None:
+    """Nothing that could move real money may report as built.
+
+    ``paper.engine`` left this list in phase 6, which is the distinction the
+    registry exists to make: a simulation that places no order is a delivered
+    capability, while anything that reaches a venue is not.
+    """
     for key in (
-        "paper.engine",
         "risk.engine",
         "order.engine",
         "execution.testnet",
         "execution.live",
         "falcon.command_center",
+        "paper.autonomous",
     ):
         capability = get_capability(key)
         assert capability is not None
         assert capability.status is CapabilityStatus.PLANNED, (
             f"{key} claims {capability.status} but no engine is implemented"
         )
+
+
+def test_paper_state_durability_is_disclosed_as_partial() -> None:
+    """A balance that silently resets is worse than one the user knows resets."""
+    durability = get_capability("paper.persistence")
+    assert durability is not None
+    assert durability.status is CapabilityStatus.PARTIAL
+    assert "IN-MEMORY" in durability.detail
+    assert "RESETS ON RESTART" in durability.detail
+
+
+def test_the_paper_engine_states_that_it_places_no_real_order() -> None:
+    engine = get_capability("paper.engine")
+    assert engine is not None
+    assert engine.status is CapabilityStatus.AVAILABLE
+    assert "NO real order" in engine.detail
 
 
 def test_available_capabilities_come_only_from_delivered_phases() -> None:

@@ -31,6 +31,12 @@ The rule, in one line::
 **Fail closed.** If any constraint is unknown the decision is a rejection with
 a reason, not a fallback to the request. An unknown ceiling is not permission
 to use the requested value.
+
+The single exception is a request for exactly ``LEVERAGE_MIN``, which resolves
+without the ceilings because no ceiling this domain accepts could change the
+answer -- and because 1x borrows nothing. It carries its own reason code so it
+is never mistaken for an approval the full chain produced. The derivation is in
+``analysis.leverage._domain_minimum_decision``.
 """
 
 from __future__ import annotations
@@ -72,6 +78,11 @@ class LeverageReason(StrEnum):
     APPROVED_IN_FULL = "LEVERAGE_APPROVED_IN_FULL"
     BOUND_BY_EXCHANGE_MAX = "LEVERAGE_REDUCED_TO_EXCHANGE_MAX"
     BOUND_BY_RISK_MAX = "LEVERAGE_REDUCED_TO_RISK_MAX"
+    #: The one case an unknown ceiling cannot block. See
+    #: ``analysis.leverage.resolve_leverage`` for the derivation: 1x is the
+    #: domain minimum, so it is <= every ceiling the domain accepts, and 1x
+    #: borrows nothing. This approves *unlevered* exposure, never leverage.
+    APPROVED_AT_DOMAIN_MINIMUM = "LEVERAGE_APPROVED_AT_DOMAIN_MINIMUM"
 
     #: Rejections. Each means a constraint could not be established.
     EXCHANGE_MAX_UNKNOWN = "RISK_REJECTED_EXCHANGE_MAX_LEVERAGE_UNKNOWN"

@@ -1,10 +1,12 @@
 """Historical simulation endpoints.
 
-`GET`, like every other route in this build. A backtest computes and returns;
-it persists nothing, places nothing and sets no leverage, so it is a read even
-though it does real work. Keeping it a GET preserves the architecture test's
-flat assertion that no non-GET route exists anywhere — an invariant worth more
+`GET`. A backtest computes and returns; it persists nothing, places nothing and
+sets no leverage, so it is a read even though it does real work — worth more
 than the convenience of a request body.
+
+Phase 6 introduced the system's first writes, but they exist only under
+`/paper`, against in-memory simulation state. A backtest stays firmly on the
+read side of that line.
 
 Every parameter is a typed, bounded field. The candle count is capped at the
 venue's own `/klines` ceiling because this phase does not page.

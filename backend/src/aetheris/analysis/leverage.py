@@ -148,6 +148,59 @@ def _validate_ceiling(value: object, name: str) -> str | None:
     return None
 
 
+def _domain_minimum_decision(
+    common: dict[str, object],
+    *,
+    requested: Decimal,
+    exchange_max_leverage: Decimal | None,
+    risk_max_leverage: Decimal | None,
+) -> LeverageDecision | None:
+    """Approve a request for exactly 1x, even with the ceilings unknown.
+
+    This is the *only* value an unknown ceiling cannot block, and the reason is
+    arithmetic rather than judgement. ``_validate_ceiling`` defines a usable
+    ceiling as one in ``[LEVERAGE_MIN, LEVERAGE_MAX]``. So for any ceiling this
+    domain would accept, ``min(1, ceiling) == 1``. Learning the ceilings could
+    therefore not change the answer, which means refusing here would not be
+    failing closed -- it would be refusing a value already proven safe against
+    every constraint the chain can express.
+
+    It is also the boundary between borrowing and not borrowing. At 1x, margin
+    equals notional: nothing is lent, and the leverage-driven liquidation the
+    rest of this chain exists to prevent has no mechanism. Approving it grants
+    no leverage at all.
+
+    Two things it deliberately does **not** do. It never applies above 1x --
+    2x genuinely needs the ceilings, and no amount of reasoning substitutes for
+    them. And it declines (returning ``None``, so the chain reports the real
+    problem) when a ceiling *was* supplied and is malformed: a broken input is
+    a defect to surface, not to route around.
+    """
+    if requested != LEVERAGE_MIN:
+        return None
+    for value, name in (
+        (exchange_max_leverage, "exchange_max_leverage"),
+        (risk_max_leverage, "risk_max_leverage"),
+    ):
+        if value is not None and _validate_ceiling(value, name) is not None:
+            return None
+    return LeverageDecision(
+        **common,  # type: ignore[arg-type]
+        approved_leverage=LEVERAGE_MIN,
+        outcome=LeverageOutcome.APPROVED,
+        reason=LeverageReason.APPROVED_AT_DOMAIN_MINIMUM,
+        binding_constraint="domain_minimum",
+        detail=(
+            f"{LEVERAGE_MIN}x approved at the domain minimum. Not every constraint is "
+            f"known, but every ceiling this domain accepts is at least {LEVERAGE_MIN}x, "
+            f"so min({LEVERAGE_MIN}, any valid ceiling) is {LEVERAGE_MIN} whatever the "
+            f"missing values turn out to be. {LEVERAGE_MIN}x is unlevered exposure -- "
+            "margin equals notional and nothing is borrowed. Anything above it still "
+            "requires the venue ceiling and the risk engine."
+        ),
+    )
+
+
 def resolve_leverage(
     request: LeverageRequest | None,
     *,
@@ -165,6 +218,10 @@ def resolve_leverage(
     The order of the checks is the order of authority: the request is only
     meaningful if it exists and is in range; the venue's ceiling is a hard
     physical limit; the risk engine has the final word.
+
+    One request resolves without the ceilings: exactly ``LEVERAGE_MIN``. See
+    ``_domain_minimum_decision`` for why that is arithmetic rather than a
+    loophole.
     """
     if request is None:
         return LeverageDecision(
@@ -179,7 +236,7 @@ def resolve_leverage(
         )
 
     requested = request.requested_leverage
-    common = {
+    common: dict[str, object] = {
         "requested_leverage": requested,
         "exchange_max_leverage": exchange_max_leverage,
         "risk_max_leverage": risk_max_leverage,
@@ -197,6 +254,19 @@ def resolve_leverage(
             reason=LeverageReason.REQUEST_OUT_OF_RANGE,
             detail=f"{request_problem}. No leverage is approved.",
         )
+
+    # The domain minimum is resolvable without the ceilings; see the helper.
+    # Checked only when the full chain cannot complete, so a fully-known chain
+    # still reports APPROVED_IN_FULL as it always did.
+    if exchange_max_leverage is None or not risk_engine_available or risk_max_leverage is None:
+        minimum = _domain_minimum_decision(
+            common,
+            requested=requested,
+            exchange_max_leverage=exchange_max_leverage,
+            risk_max_leverage=risk_max_leverage,
+        )
+        if minimum is not None:
+            return minimum
 
     if exchange_max_leverage is None:
         # The single most important fail-closed case. Venues publish

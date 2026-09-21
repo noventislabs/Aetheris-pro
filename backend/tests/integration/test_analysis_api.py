@@ -7,6 +7,7 @@ from collections.abc import Iterator
 import pytest
 from fastapi.testclient import TestClient
 from tests.fixtures import binance_payloads as payloads
+from tests.fixtures.invariants import assert_route_surface
 from tests.fixtures.transport import RoutingHandler, json_route, raw_route, status_route
 
 from aetheris.adapters.exchange.binance import endpoints
@@ -350,9 +351,8 @@ def test_strategy_on_stale_data_reports_no_bias(handler: RoutingHandler) -> None
 
 
 def test_analysis_adds_no_write_route(client: TestClient) -> None:
-    paths = client.get("/openapi.json").json()["paths"]
-    for path, operations in paths.items():
-        assert set(operations) <= {"get"}, f"{path} exposes a non-GET method"
+    """Analysis stays a read. The whole surface is checked, not just its slice."""
+    assert_route_surface(client)
 
 
 def test_capabilities_report_indicators_and_strategy_as_available(
@@ -366,6 +366,8 @@ def test_capabilities_report_indicators_and_strategy_as_available(
     assert by_key["analysis.smc"]["status"] == "PLANNED"
     # Backtesting shipped in phase 5, in the commit that landed its tests.
     assert by_key["backtest.engine"]["status"] == "AVAILABLE"
-    assert by_key["paper.engine"]["status"] == "PLANNED"
+    # Paper trading shipped in phase 6; real execution still has not.
+    assert by_key["paper.engine"]["status"] == "AVAILABLE"
+    assert by_key["execution.testnet"]["status"] == "PLANNED"
     assert by_key["ai.analysis"]["status"] == "PLANNED"
     assert by_key["execution.live"]["status"] == "PLANNED"

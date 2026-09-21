@@ -133,10 +133,11 @@ Returned with the result and rendered beside the numbers, never hidden:
 
 `GET /api/v1/backtest/method` — the fill model and the list of gaps in it.
 
-`GET /api/v1/backtest/{symbol}` — run a simulation. `GET`, like every route in
-this build: a backtest computes and returns, persisting nothing and placing
-nothing, so it is a read even though it does real work. Keeping it a GET
-preserves the architecture test's flat assertion that no non-GET route exists.
+`GET /api/v1/backtest/{symbol}` — run a simulation. A `GET` because a backtest
+computes and returns: it persists nothing and places nothing, so it is a read
+even though it does real work. Phase 6 added the system's first writes, but they
+live only under `/paper` — a backtest stays on the read side of that line. See
+[ADR 0003](adr/0003-write-routes-and-the-get-only-invariant.md).
 
 ## 8. Verified against live data
 
