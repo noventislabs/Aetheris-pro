@@ -104,6 +104,10 @@ def routes(book: PriceBook | None = None, *, min_notional: str = "5") -> Routing
                     symbol=symbol, bid=str(market.bid), ask=str(market.ask)
                 )
             ),
+            # ADR 0006: every manual order now measures volatility from real
+            # candles before the risk engine will rule on it. Sixty bars, which
+            # is what the service asks for.
+            endpoints.KLINES: json_route(payloads.klines(count=60, interval_seconds=900)),
         }
     )
 

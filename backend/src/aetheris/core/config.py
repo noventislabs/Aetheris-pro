@@ -46,7 +46,16 @@ class RiskSettings(BaseSettings):
     max_portfolio_exposure: Decimal = Field(
         default=Decimal("300"), description="Aggregate notional ceiling in USDT"
     )
-    entry_cooldown_seconds: int = Field(default=300, ge=0)
+    entry_cooldown_seconds: int = Field(
+        default=300,
+        ge=0,
+        description="Between autonomous entries on one symbol. Sized for a loop "
+        "acting on 15-minute bars.",
+    )
+    #: A human is not a loop on 15-minute bars. Separate rather than shared
+    #: so the autonomous cadence can be tuned without silently changing what
+    #: a person is allowed to do, and the reverse.
+    manual_entry_cooldown_seconds: int = Field(default=60, ge=0)
     max_data_age_seconds: float = Field(
         default=30.0,
         gt=0,

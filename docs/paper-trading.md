@@ -49,6 +49,19 @@ market data → fill price → size against venue filters → RISK GATE
 an API client all arrive at the same function with the same authority, which is
 none. Nothing downstream can overrule a refusal.
 
+Since [ADR 0006](adr/0006-unified-risk-path.md) that is true of the phase 7 risk
+engine as well as this gate: `PaperTradingService.submit_order` evaluates
+`engines/risk/` for **every** caller, and the approved verdict — margin *and*
+leverage — is what reaches the engine. There is no second leverage resolution.
+The phase 6 gate then re-checks independently; two gates, neither trusting the
+other.
+
+Manual orders therefore also measure volatility from ~60 real candles before
+anything is ruled on, and can be refused for `COOLDOWN` (60s for a human, 300s
+for the loop), `ABNORMAL_VOLATILITY` or `INSUFFICIENT_HISTORY`. A newly listed
+instrument with fewer than 15 closed bars is refused rather than sized against
+an assumed volatility.
+
 ### Refusal ordering
 
 Refusals are ranked by how fundamental they are, and the *first* thing wrong is

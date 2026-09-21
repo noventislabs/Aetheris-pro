@@ -33,6 +33,7 @@ lock removed, which is the failure mode a concurrency test most easily hides.
 from __future__ import annotations
 
 import asyncio
+from datetime import timedelta
 from decimal import Decimal
 
 import pytest
@@ -40,8 +41,8 @@ import pytest
 from aetheris.core.config import Settings
 from aetheris.core.errors import RiskRejectionCode
 from aetheris.core.freshness import Observation, utcnow
-from aetheris.domain.enums import ContractType, OrderSide, SymbolStatus
-from aetheris.domain.market import Symbol, SymbolFilters, Ticker
+from aetheris.domain.enums import ContractType, OrderSide, SymbolStatus, Timeframe
+from aetheris.domain.market import Candle, CandleSeries, Symbol, SymbolFilters, Ticker
 from aetheris.engines.paper.engine import PaperEngine, PaperEngineConfig, SubmitOrderRequest
 from aetheris.engines.paper.store import InMemoryPaperRepository
 from aetheris.services.paper import PaperTradingService
@@ -111,6 +112,34 @@ class SlowMarketData:
 
     async def get_symbol(self, symbol: str) -> Symbol:
         return SYMBOL
+
+    async def get_klines(
+        self, symbol: str, timeframe: Timeframe, *, limit: int
+    ) -> Observation[CandleSeries]:
+        """Candles for the ADR 0006 volatility measurement.
+
+        Deliberately *not* gated behind the test's price gate: the interleaving
+        under test is the ticker fetch, and parking here too would just add a
+        second arrival to wait for without changing what is being proved.
+        """
+        now = utcnow()
+        candles = tuple(
+            Candle(
+                open_time=now - timedelta(minutes=15 * (limit - i)),
+                close_time=now - timedelta(minutes=15 * (limit - i - 1), milliseconds=1),
+                open=Decimal(100),
+                high=Decimal("100.5"),
+                low=Decimal("99.5"),
+                close=Decimal(100),
+                volume=Decimal(1000),
+            )
+            for i in range(limit)
+        )
+        return Observation[CandleSeries].ok(
+            CandleSeries(symbol=symbol.upper(), timeframe=timeframe, candles=candles),
+            source="test-venue:rest",
+            event_ts=candles[-1].close_time,
+        )
 
 
 def build_service() -> tuple[PaperTradingService, SlowMarketData, PaperEngine]:

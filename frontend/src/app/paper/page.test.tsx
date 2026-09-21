@@ -177,6 +177,8 @@ function result(overrides: Partial<PaperOrderResult> = {}): PaperOrderResult {
     trade: null,
     account: account(),
     detail: "PAPER order filled: 0.00025 BTCUSDT at 80010. Simulation only.",
+    checks_performed: ["mode_enabled", "measured_volatility", "approved"],
+    risk_max_leverage: "3.00",
     ...overrides,
   };
 }
@@ -351,6 +353,48 @@ describe("PaperPage", () => {
     const chain = await screen.findByText(/Leverage requested 10x/);
     expect(chain).toHaveTextContent("venue ceiling UNKNOWN");
     expect(chain).toHaveTextContent("risk ceiling UNKNOWN");
+  });
+
+  it("shows the refusal detail, not only the code", async () => {
+    // A bare RISK_REJECTED_STALE_DATA on a symbol whose price is visibly fresh
+    // reads as a contradiction. The detail says whether the candles were
+    // missing, too few, or too old (ADR 0006).
+    stub();
+    vi.spyOn(api, "submitPaperOrder").mockResolvedValue(
+      result({
+        accepted: false,
+        position: null,
+        detail: "RISK_REJECTED_INSUFFICIENT_HISTORY: not enough candles",
+        checks_performed: ["mode_enabled", "market_data_usable", "measured_volatility"],
+        order: order({
+          state: "REJECTED",
+          rejection_code: "RISK_REJECTED_INSUFFICIENT_HISTORY",
+          rejection_detail:
+            "Only 8 closed candle(s) are available; ATR(14) needs 15. This instrument does not have enough history yet.",
+          fills: [],
+          average_fill_price: null,
+        }),
+      }),
+    );
+    const user = userEvent.setup();
+    render(<PaperPage />);
+    await screen.findByText("Equity");
+    await user.click(screen.getByRole("button", { name: "Submit paper order" }));
+
+    expect(await screen.findByText(/ATR\(14\) needs 15/)).toBeInTheDocument();
+    expect(screen.getByText(/does not have enough history yet/)).toBeInTheDocument();
+  });
+
+  it("lists the risk checks that ran, including the ones that passed", async () => {
+    stub();
+    vi.spyOn(api, "submitPaperOrder").mockResolvedValue(result());
+    const user = userEvent.setup();
+    render(<PaperPage />);
+    await screen.findByText("Equity");
+    await user.click(screen.getByRole("button", { name: "Submit paper order" }));
+
+    expect(await screen.findByText(/Risk checks run:/)).toBeInTheDocument();
+    expect(screen.getByText(/mode_enabled/)).toBeInTheDocument();
   });
 
   it("describes leverage as a request, never an authorisation", async () => {

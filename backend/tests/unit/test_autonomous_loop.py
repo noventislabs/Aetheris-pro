@@ -284,9 +284,17 @@ async def test_an_empty_universe_evaluates_nothing_and_says_so() -> None:
 
 
 async def test_the_universe_is_capped() -> None:
+    """Asserted on symbols evaluated, not on raw kline calls.
+
+    Since ADR 0006 each symbol costs two candle fetches on the autonomous path
+    -- 300 bars for the strategy in the loop, 60 for the volatility the risk
+    authority measures for itself. Counting calls would make this test a
+    tripwire for that ratio rather than for the cap it is named after.
+    """
     loop, market, *_ = build(symbols=[f"S{i}USDT" for i in range(20)], max_symbols=3)
-    await loop.run_once()
-    assert market.kline_calls == 3
+    decisions = await loop.run_once()
+    assert len({d.symbol for d in decisions}) == 3
+    assert market.kline_calls > 0
 
 
 # ----------------------------------------------------------------------

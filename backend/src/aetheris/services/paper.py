@@ -30,19 +30,27 @@ writes would make the terminal stutter whenever the loop is working.
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
+from datetime import datetime
 from decimal import Decimal
+from typing import Final
 
 from aetheris.adapters.exchange.errors import SymbolNotFoundError
-from aetheris.analysis.leverage import resolve_leverage
+from aetheris.analysis.indicators.prepare import prepare_candles
+from aetheris.analysis.volatility import (
+    VolatilityMeasurement,
+    VolatilityStatus,
+    measure_atr_percent,
+)
 from aetheris.core.config import Settings
 from aetheris.core.errors import AetherisError
 from aetheris.core.freshness import DataStatus, Observation, utcnow
-from aetheris.domain.enums import TradingMode
+from aetheris.core.money import ZERO, quantize_usdt
+from aetheris.domain.enums import Timeframe, TradingMode
 from aetheris.domain.leverage import (
-    LEVERAGE_MAX,
-    LEVERAGE_MIN,
     LeverageDecision,
-    LeverageRequest,
+    LeverageOutcome,
+    LeverageReason,
 )
 from aetheris.domain.market import Symbol, Ticker
 from aetheris.domain.paper import (
@@ -57,9 +65,22 @@ from aetheris.engines.paper.engine import (
     PaperEngine,
     SubmitOrderRequest,
 )
+from aetheris.engines.risk.engine import evaluate as risk_evaluate
+from aetheris.engines.risk.policy import (
+    RiskAccountView,
+    RiskMarketView,
+    RiskPolicy,
+    RiskProposal,
+)
 from aetheris.services.market_data import MarketDataService
 
-__all__ = ["PaperTradingService"]
+__all__ = ["MANUAL_RISK_CANDLES", "PaperTradingService"]
+
+#: Candles fetched to measure volatility for one order. ATR(14) needs 15;
+#: 60 leaves room for bars dropped as still forming without spending venue
+#: quota on history nothing reads (ADR 0006 §L).
+MANUAL_RISK_CANDLES: Final = 60
+MANUAL_RISK_TIMEFRAME: Final = Timeframe.M15
 
 
 def mark_from_observation(symbol: str, observation: Observation[Ticker]) -> MarkPrice:
@@ -97,6 +118,10 @@ class PaperTradingService:
         #: Covers each fetch-then-mutate sequence. See the module docstring for
         #: the interleaving this prevents.
         self._write_lock = asyncio.Lock()
+        #: Per-symbol entry times, for the cooldown. In memory like every
+        #: other piece of paper state; a restart forgets it, which is the
+        #: permissive direction and is disclosed rather than hidden.
+        self._last_entry_at: dict[str, datetime] = {}
 
     @property
     def engine(self) -> PaperEngine:
@@ -185,14 +210,18 @@ class PaperTradingService:
         request: SubmitOrderRequest,
         *,
         requested_leverage: Decimal,
-        risk_verdict_detail: str | None = None,
+        origin: str = "manual",
     ) -> PaperOrderResult:
-        """Resolve the leverage chain, then submit to the engine's risk gate."""
+        """Rule on the order, then submit what was approved.
+
+        **The single risk authority for every paper order** (ADR 0006). Manual
+        and autonomous callers arrive here, and both are ruled on by
+        ``engines.risk.evaluate`` before anything reaches the engine. There is
+        no second leverage resolution and no path around this.
+        """
         async with self._write_lock:
             return await self._submit_locked(
-                request,
-                requested_leverage=requested_leverage,
-                risk_verdict_detail=risk_verdict_detail,
+                request, requested_leverage=requested_leverage, origin=origin
             )
 
     async def _submit_locked(
@@ -200,24 +229,27 @@ class PaperTradingService:
         request: SubmitOrderRequest,
         *,
         requested_leverage: Decimal,
-        risk_verdict_detail: str | None = None,
+        origin: str,
     ) -> PaperOrderResult:
-        """The body of ``submit_order``, run under the write lock.
-
-        Split out so the lock is acquired once at the boundary rather than
-        being threaded through every early return.
-        """
+        """The body of ``submit_order``, run under the write lock."""
         symbol = request.symbol.upper()
         now = utcnow()
         marks = await self._open_marks()
+
+        # Idempotency before risk. A retry after a dropped response must return
+        # what happened the first time; re-ruling it would hand the caller a
+        # different answer to the one already applied -- the first attempt
+        # opened a position, the second reports a cooldown refusal for it.
+        if request.client_order_id is not None:
+            replayed = self._engine.replay(request.client_order_id, now=now, marks=marks)
+            if replayed is not None:
+                return replayed
 
         # Metadata before price: an unlisted symbol has no ticker to fetch, and
         # letting that surface as a bare 404 would give the order path a second
         # failure shape for callers to handle.
         listed, problem = await self._metadata(symbol)
         if listed is None:
-            # Modelled as an unusable-price refusal so the caller gets the same
-            # shape as every other rejection rather than a special case.
             return self._engine.submit_order(
                 request,
                 now=now,
@@ -231,27 +263,177 @@ class PaperTradingService:
                     ),
                 ),
                 filters=None,
-                leverage=self._resolve_leverage(requested_leverage, exchange_max=None),
+                leverage=_unresolvable_leverage(
+                    "The symbol is not listed, so no venue ceiling exists to rule against."
+                ),
                 paper_enabled=self.paper_enabled,
                 marks=marks,
             )
 
-        # Read from venue metadata rather than assumed. None today, and
-        # honestly so: leverage brackets are served only from an authenticated
-        # endpoint and this build holds no credentials. The moment a venue does
-        # publish one, the chain starts using it with no change here.
-        exchange_max = Decimal(listed.max_leverage) if listed.max_leverage is not None else None
-        decision = self._resolve_leverage(requested_leverage, exchange_max=exchange_max)
         mark = marks.get(symbol) or await self._mark(symbol)
-        return self._engine.submit_order(
-            request,
+        volatility = await self._measure_volatility(symbol, now)
+        account = self._engine.snapshot(now=now, marks=marks)
+
+        # THE RISK AUTHORITY. Every order, whatever proposed it.
+        verdict = risk_evaluate(
+            RiskProposal(
+                symbol=symbol,
+                side=request.side,
+                requested_margin=self._proposed_margin(request, mark),
+                requested_leverage=requested_leverage,
+                stop_loss_percent=request.stop_loss_percent,
+                take_profit_percent=request.take_profit_percent,
+                trailing_stop_percent=request.trailing_stop_percent,
+                origin=origin,
+            ),
+            account=self._account_view(account, symbol),
+            market=RiskMarketView(
+                symbol=symbol,
+                status=mark.status,
+                age_seconds=mark.age_seconds,
+                last_price=mark.last_price,
+                atr_percent=volatility.atr_percent,
+                volatility_status=volatility.status,
+                volatility_detail=volatility.detail,
+                filters=listed.filters,
+                # Read from venue metadata, never assumed. None today: leverage
+                # brackets are served only from an authenticated endpoint.
+                exchange_max_leverage=(
+                    Decimal(listed.max_leverage) if listed.max_leverage is not None else None
+                ),
+            ),
+            policy=self._policy(origin),
+            now=now,
+        )
+
+        if not verdict.approved:
+            if verdict.code is None:  # pragma: no cover - RiskVerdict forbids it
+                raise ValueError("a refusing verdict must carry a rejection code")
+            return self._engine.refuse(
+                request,
+                now=now,
+                code=verdict.code,
+                detail=verdict.detail,
+                leverage=verdict.leverage,
+                marks=marks,
+                checks_performed=verdict.checks_performed,
+                risk_max_leverage=verdict.risk_max_leverage,
+            )
+
+        # Submit exactly what was approved -- the approved margin and the
+        # approved leverage, not what was asked for. The engine's own gate then
+        # checks again, independently.
+        outcome = self._engine.submit_order(
+            replace(request, margin=verdict.approved_margin, quantity=None),
             now=now,
             mark=mark,
             filters=listed.filters,
-            leverage=decision,
+            leverage=verdict.leverage,
             paper_enabled=self.paper_enabled,
             marks=marks,
-            risk_verdict_detail=risk_verdict_detail,
+            risk_verdict_detail=verdict.detail,
+            checks_performed=verdict.checks_performed,
+            risk_max_leverage=verdict.risk_max_leverage,
+        )
+        if outcome.accepted:
+            self._last_entry_at[symbol] = now
+        return outcome
+
+    def _proposed_margin(self, request: SubmitOrderRequest, mark: MarkPrice) -> Decimal:
+        """What the caller is asking to commit, expressed as margin.
+
+        The risk engine rules on margin, so a quantity-denominated request is
+        converted here. An unusable price leaves it at zero, which the engine
+        refuses for data quality before the size is ever considered.
+        """
+        if request.margin is not None:
+            return request.margin
+        if request.quantity is not None and mark.last_price is not None:
+            return quantize_usdt(request.quantity * mark.last_price)
+        return ZERO
+
+    async def _measure_volatility(self, symbol: str, now: datetime) -> VolatilityMeasurement:
+        """Fetch real candles and measure ATR. Never estimated, never reused.
+
+        ~60 bars, not the 300 the autonomous loop takes for its strategy:
+        ATR(14) needs 15, and fetching five times that for one number is venue
+        quota spent on nothing. Failures come back as a status rather than an
+        exception so the refusal can name the actual condition.
+        """
+        try:
+            observation = await self._market_data.get_klines(
+                symbol, MANUAL_RISK_TIMEFRAME, limit=MANUAL_RISK_CANDLES
+            )
+        except AetherisError as exc:
+            return VolatilityMeasurement(
+                status=VolatilityStatus.CANDLES_UNAVAILABLE,
+                detail=(
+                    f"Candles for {symbol} could not be fetched ({exc.code.value}), so "
+                    "volatility is unknown. The price may be fresh; the history is not "
+                    "available, and it is not estimated."
+                ),
+            )
+        if observation.status is DataStatus.STALE:
+            return VolatilityMeasurement(
+                status=VolatilityStatus.CANDLES_STALE,
+                detail=(
+                    f"Candles for {symbol} are stale, so the volatility they describe is "
+                    "not the present one."
+                ),
+            )
+        raw = observation.value.candles if observation.value is not None else ()
+        prepared = prepare_candles(raw, now)
+        if not prepared.ok:
+            return VolatilityMeasurement(
+                status=VolatilityStatus.CANDLES_UNAVAILABLE,
+                detail=f"Candles for {symbol} are unusable: {prepared.detail}",
+            )
+        return measure_atr_percent(prepared.candles)
+
+    def _policy(self, origin: str) -> RiskPolicy:
+        """The envelope, with the cooldown that belongs to this caller.
+
+        A human is not a loop on 15-minute bars (ADR 0006 §N.3), so the two
+        cadences are configured separately rather than sharing one number that
+        cannot suit both.
+        """
+        risk = self._settings.risk
+        cooldown = (
+            risk.entry_cooldown_seconds
+            if origin == "autonomous-loop"
+            else risk.manual_entry_cooldown_seconds
+        )
+        return RiskPolicy(
+            max_open_positions=risk.max_open_positions,
+            max_position_notional=risk.max_position_notional,
+            max_portfolio_exposure=risk.max_portfolio_exposure,
+            max_leverage=risk.max_leverage,
+            max_data_age_seconds=risk.max_data_age_seconds,
+            entry_cooldown_seconds=float(cooldown),
+            max_atr_percent=self._settings.autonomous.max_atr_percent,
+        )
+
+    def _account_view(self, account: PaperAccount, symbol: str) -> RiskAccountView:
+        return RiskAccountView(
+            balance=account.balance,
+            available_balance=account.available_balance,
+            equity=account.equity,
+            margin_used=account.margin_used,
+            open_symbols=frozenset(p.symbol for p in account.positions),
+            open_position_count=len(account.positions),
+            total_notional=sum((p.notional for p in account.positions), ZERO),
+            session_realized_pnl=account.session.realized_pnl,
+            daily_profit_target=account.session.profit_target,
+            daily_loss_limit=account.session.loss_limit,
+            lock_state=account.session.lock_state,
+            lock_reason=account.session.lock_reason,
+            emergency_stopped=self._engine.emergency_stopped,
+            emergency_reason=self._engine.emergency_reason,
+            mode_enabled=self.paper_enabled,
+            # Paper holds no venue orders, so nothing can be out of step with a
+            # venue. Real counts arrive with phase 8b's durable order store.
+            unreconciled_orders=0,
+            last_entry_at=self._last_entry_at.get(symbol),
         )
 
     async def close_position(
@@ -284,33 +466,16 @@ class PaperTradingService:
         async with self._write_lock:
             return self._engine.set_emergency_stop(engaged=engaged, reason=reason, now=utcnow())
 
-    # ------------------------------------------------------------------
-    # Leverage
-    # ------------------------------------------------------------------
 
-    @staticmethod
-    def _resolve_leverage(requested: Decimal, *, exchange_max: Decimal | None) -> LeverageDecision:
-        """Run the Phase 4 chain, unchanged, for a paper order.
+def _unresolvable_leverage(detail: str) -> LeverageDecision:
+    """A chain that could not be reached. Reported rather than omitted.
 
-        Paper does not get a softer chain than live would. The risk engine is
-        still absent (phase 7) and the venue ceiling is still unknown, so
-        anything above the domain minimum fails closed here exactly as it does
-        on the analysis endpoint -- which is the point: the refusal is
-        exercised against real requests before it ever guards real money.
-        """
-        clamped = max(LEVERAGE_MIN, min(requested, LEVERAGE_MAX))
-        candidate = LeverageRequest(
-            requested_leverage=clamped,
-            basis=(
-                "Caller-supplied leverage request for a paper position. A request, "
-                "never an authorisation: the constraint chain rules on it, and the "
-                "risk engine has final authority."
-            ),
-            inputs={"requested_leverage": clamped},
-        )
-        return resolve_leverage(
-            candidate,
-            exchange_max_leverage=exchange_max,
-            risk_max_leverage=None,
-            risk_engine_available=False,
-        )
+    Used only where the symbol itself is unusable, so there was never a ceiling
+    to rule against. A reader sees that the chain was not reached instead of
+    wondering whether it silently passed.
+    """
+    return LeverageDecision(
+        outcome=LeverageOutcome.REJECTED,
+        reason=LeverageReason.INSUFFICIENT_DATA,
+        detail=detail,
+    )

@@ -235,6 +235,83 @@ class PaperEngine:
     def config(self) -> PaperEngineConfig:
         return self._config
 
+    def replay(
+        self,
+        client_order_id: str,
+        *,
+        now: datetime,
+        marks: Mapping[str, MarkPrice] | None = None,
+    ) -> PaperOrderResult | None:
+        """The original outcome for an id already seen, or ``None``.
+
+        Consulted *before* the risk engine rules, because a retry after a
+        dropped response must return what happened the first time -- not a
+        fresh verdict. Re-evaluating would mean a client that retried got a
+        different answer to the one already applied, which is the exact failure
+        idempotency exists to prevent: the first attempt opened a position and
+        the second reports a cooldown refusal for it.
+        """
+        state = self._repository.load()
+        existing = state.orders_by_client_id.get(client_order_id)
+        if existing is None:
+            return None
+        self._ensure_session(state, now)
+        all_marks = dict(marks or {})
+        return PaperOrderResult(
+            accepted=existing.is_filled,
+            order=existing.model_copy(update={"idempotent_replay": True}),
+            position=self._position_model(state.positions.get(existing.symbol), now, all_marks),
+            account=self._build_account(state, now=now, marks=all_marks),
+            detail=(
+                f"Client order id {client_order_id} was already submitted; the original "
+                "outcome is returned unchanged and nothing new was opened or ruled on."
+            ),
+        )
+
+    @property
+    def emergency_stopped(self) -> bool:
+        return self._repository.load().emergency_stopped
+
+    @property
+    def emergency_reason(self) -> str | None:
+        return self._repository.load().emergency_reason
+
+    def refuse(
+        self,
+        request: SubmitOrderRequest,
+        *,
+        now: datetime,
+        code: RiskRejectionCode,
+        detail: str,
+        leverage: LeverageDecision,
+        marks: Mapping[str, MarkPrice] | None = None,
+        checks_performed: tuple[str, ...] = (),
+        risk_max_leverage: Decimal | None = None,
+    ) -> PaperOrderResult:
+        """Record a refusal the risk engine issued before the gate was reached.
+
+        The order still enters the log with its code, exactly as a refusal from
+        this engine's own gate would. A risk verdict that left no trace in the
+        account history would make the authority invisible in the one place a
+        user looks for it.
+        """
+        state = self._repository.load()
+        self._ensure_session(state, now)
+        symbol = request.symbol.upper()
+        client_order_id = request.client_order_id or f"paper-{state.next_sequence()}"
+        return self._reject(
+            state,
+            symbol,
+            request,
+            client_order_id,
+            RiskRefusal(code, detail),
+            now,
+            dict(marks or {}),
+            leverage=leverage,
+            checks_performed=checks_performed,
+            risk_max_leverage=risk_max_leverage,
+        )
+
     # ------------------------------------------------------------------
     # Reading
     # ------------------------------------------------------------------
@@ -279,6 +356,8 @@ class PaperEngine:
         paper_enabled: bool,
         marks: Mapping[str, MarkPrice] | None = None,
         risk_verdict_detail: str | None = None,
+        checks_performed: tuple[str, ...] = (),
+        risk_max_leverage: Decimal | None = None,
     ) -> PaperOrderResult:
         """Open a position, or explain precisely why not.
 
@@ -357,6 +436,8 @@ class PaperEngine:
                 now,
                 all_marks,
                 leverage=leverage,
+                checks_performed=checks_performed,
+                risk_max_leverage=risk_max_leverage,
             )
         approved_leverage = leverage.approved_leverage
 
@@ -378,6 +459,8 @@ class PaperEngine:
                 now,
                 all_marks,
                 leverage=leverage,
+                checks_performed=checks_performed,
+                risk_max_leverage=risk_max_leverage,
             )
 
         notional = quantize_usdt(quantity * price)
@@ -400,6 +483,8 @@ class PaperEngine:
                 now,
                 all_marks,
                 leverage=leverage,
+                checks_performed=checks_performed,
+                risk_max_leverage=risk_max_leverage,
             )
 
         # THE GATE.
@@ -429,6 +514,8 @@ class PaperEngine:
                 now,
                 all_marks,
                 leverage=leverage,
+                checks_performed=checks_performed,
+                risk_max_leverage=risk_max_leverage,
             )
 
         return self._open_position(
@@ -446,6 +533,8 @@ class PaperEngine:
             now=now,
             marks=all_marks,
             risk_verdict_detail=risk_verdict_detail,
+            checks_performed=checks_performed,
+            risk_max_leverage=risk_max_leverage,
         )
 
     def tick(
@@ -746,6 +835,8 @@ class PaperEngine:
         now: datetime,
         marks: Mapping[str, MarkPrice],
         risk_verdict_detail: str | None = None,
+        checks_performed: tuple[str, ...] = (),
+        risk_max_leverage: Decimal | None = None,
     ) -> PaperOrderResult:
         approved = leverage.approved_leverage
         if approved is None:  # pragma: no cover - checked by the caller
@@ -834,6 +925,8 @@ class PaperEngine:
             order=order,
             position=self._position_model(position, now, marks),
             account=self._build_account(state, now=now, marks=marks),
+            checks_performed=checks_performed,
+            risk_max_leverage=risk_max_leverage,
             detail=(
                 f"PAPER order filled: {quantity} {symbol} at {price} ({price_source}), "
                 f"{approved}x, margin {margin} USDT, fee {fee} USDT. Simulation only "
@@ -1003,6 +1096,8 @@ class PaperEngine:
         *,
         leverage: LeverageDecision | None = None,
         reduce_only: bool = False,
+        checks_performed: tuple[str, ...] = (),
+        risk_max_leverage: Decimal | None = None,
     ) -> PaperOrderResult:
         """Record a refusal as a first-class order, not a bare error.
 
@@ -1041,6 +1136,8 @@ class PaperEngine:
             order=order,
             account=self._build_account(state, now=now, marks=marks),
             detail=f"{refusal.code.value}: {refusal.detail}",
+            checks_performed=checks_performed,
+            risk_max_leverage=risk_max_leverage,
         )
 
     def _record_order(self, state: PaperState, order: PaperOrder) -> None:

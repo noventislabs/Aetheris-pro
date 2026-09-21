@@ -29,6 +29,7 @@ from datetime import datetime
 from decimal import Decimal
 
 from aetheris.analysis.leverage import resolve_leverage
+from aetheris.analysis.volatility import VolatilityStatus
 from aetheris.core.errors import RiskRejectionCode
 from aetheris.core.freshness import DataStatus
 from aetheris.core.money import ZERO, floor_to_step, quantize_usdt
@@ -198,48 +199,14 @@ def evaluate(
         )
 
     # ------------------------------------------------------------------
-    # 3. Cooldown and measured volatility.
-    # ------------------------------------------------------------------
-    checks.append("entry_cooldown")
-    if account.last_entry_at is not None and policy.entry_cooldown_seconds > 0:
-        elapsed = (now - account.last_entry_at).total_seconds()
-        if elapsed < policy.entry_cooldown_seconds:
-            return _refuse(
-                RiskRejectionCode.COOLDOWN,
-                (
-                    f"{symbol} was entered {elapsed:.0f}s ago; the cooldown is "
-                    f"{policy.entry_cooldown_seconds:.0f}s. Re-entering immediately "
-                    "after an exit is how one bad signal becomes several."
-                ),
-                not_reached,
-                checks,
-            )
-
-    checks.append("measured_volatility")
-    if market.atr_percent is None:
-        return _refuse(
-            RiskRejectionCode.STALE_DATA,
-            (
-                f"Volatility for {symbol} could not be measured from the available "
-                "candles, so the risk envelope cannot be applied to it."
-            ),
-            not_reached,
-            checks,
-        )
-    if market.atr_percent > policy.max_atr_percent:
-        return _refuse(
-            RiskRejectionCode.ABNORMAL_VOLATILITY,
-            (
-                f"Measured ATR is {market.atr_percent}% of price, beyond the "
-                f"{policy.max_atr_percent}% ceiling. This is an observation of "
-                "current volatility, not a forecast of what it will do next."
-            ),
-            not_reached,
-            checks,
-        )
-
-    # ------------------------------------------------------------------
-    # 4. Position slots.
+    # 3. Position slots.
+    #
+    # Before the cooldown, deliberately. ``last_entry_at`` is stamped when a
+    # position opens, so holding one always implies a recent entry -- and
+    # checking pacing first would report "wait 60s" for the entire cooldown
+    # window when the real answer is "you already hold this". The cooldown
+    # exists to stop re-entry churn after an *exit*; if the position is still
+    # open, nobody is re-entering.
     # ------------------------------------------------------------------
     checks.append("symbol_not_already_open")
     if symbol in account.open_symbols:
@@ -260,6 +227,61 @@ def evaluate(
             checks,
         )
 
+    # ------------------------------------------------------------------
+    # 4. Pacing and measured volatility.
+    # ------------------------------------------------------------------
+    checks.append("entry_cooldown")
+    if account.last_entry_at is not None and policy.entry_cooldown_seconds > 0:
+        elapsed = (now - account.last_entry_at).total_seconds()
+        if elapsed < policy.entry_cooldown_seconds:
+            return _refuse(
+                RiskRejectionCode.COOLDOWN,
+                (
+                    f"{symbol} was entered {elapsed:.0f}s ago; the cooldown is "
+                    f"{policy.entry_cooldown_seconds:.0f}s. Re-entering immediately "
+                    "after an exit is how one bad signal becomes several."
+                ),
+                not_reached,
+                checks,
+            )
+
+    checks.append("measured_volatility")
+    if market.volatility_status is not VolatilityStatus.MEASURED or market.atr_percent is None:
+        # Each condition gets its own code. "There is not enough history" is
+        # not "the feed is stale": in the first the price may be perfectly
+        # fresh, and telling a user to wait for newer data would be advice that
+        # cannot work.
+        code = (
+            RiskRejectionCode.INSUFFICIENT_HISTORY
+            if market.volatility_status is VolatilityStatus.INSUFFICIENT_HISTORY
+            else RiskRejectionCode.STALE_DATA
+        )
+        return _refuse(
+            code,
+            market.volatility_detail
+            or (
+                f"Volatility for {symbol} could not be measured "
+                f"({market.volatility_status.value}), so the risk envelope cannot be "
+                "applied to it. It is not estimated and not assumed."
+            ),
+            not_reached,
+            checks,
+        )
+    if market.atr_percent > policy.max_atr_percent:
+        return _refuse(
+            RiskRejectionCode.ABNORMAL_VOLATILITY,
+            (
+                f"Measured ATR is {market.atr_percent}% of price, beyond the "
+                f"{policy.max_atr_percent}% ceiling. This is an observation of "
+                "current volatility, not a forecast of what it will do next."
+            ),
+            not_reached,
+            checks,
+        )
+
+    # ------------------------------------------------------------------
+    # 4. Position slots.
+    # ------------------------------------------------------------------
     # ------------------------------------------------------------------
     # 5. Leverage. This engine supplies the risk ceiling the chain has always
     #    reported as missing -- and the chain still refuses above 1x, because

@@ -292,6 +292,12 @@ class PaperOrderResult(BaseModel):
     trade: PaperTrade | None = None
     account: PaperAccount
     detail: str | None = None
+    #: Which risk checks ran, in order, before this outcome. Names only -- no
+    #: thresholds, no account internals, nothing sensitive. An audit trail that
+    #: records only the failing check cannot show what passed before it.
+    checks_performed: tuple[str, ...] = ()
+    #: The ceiling the risk engine derived, reported whether or not it bound.
+    risk_max_leverage: Decimal | None = None
 
 
 class ReconciliationStatus(StrEnum):

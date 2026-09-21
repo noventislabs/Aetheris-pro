@@ -560,6 +560,20 @@ export default function PaperPage() {
                 {outcome.order.fills[0].price_source}
               </p>
             ) : null}
+            {/*
+              The refusal detail, not only the code. A bare
+              RISK_REJECTED_STALE_DATA on a symbol whose price is visibly fresh
+              reads as a contradiction; the detail says whether the candles were
+              missing, too few, or too old.
+            */}
+            {!outcome.accepted && outcome.order.rejection_detail ? (
+              <p className="state-detail">{outcome.order.rejection_detail}</p>
+            ) : null}
+            {outcome.checks_performed?.length ? (
+              <p className="state-detail">
+                <strong>Risk checks run:</strong> {outcome.checks_performed.join(" → ")}
+              </p>
+            ) : null}
           </div>
         ) : null}
       </section>

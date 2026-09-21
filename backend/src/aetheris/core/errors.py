@@ -30,6 +30,11 @@ class RiskRejectionCode(StrEnum):
     MAX_OPEN_POSITIONS = "RISK_REJECTED_MAX_OPEN_POSITIONS"
     PORTFOLIO_EXPOSURE = "RISK_REJECTED_PORTFOLIO_EXPOSURE"
     STALE_DATA = "RISK_REJECTED_STALE_DATA"
+    #: Enough real history to measure volatility does not exist yet -- a
+    #: newly listed instrument, typically. Distinct from STALE_DATA because
+    #: the price may be perfectly fresh; what is missing is the past, and no
+    #: amount of waiting for a newer tick supplies it.
+    INSUFFICIENT_HISTORY = "RISK_REJECTED_INSUFFICIENT_HISTORY"
     ABNORMAL_VOLATILITY = "RISK_REJECTED_ABNORMAL_VOLATILITY"
     INSUFFICIENT_BALANCE = "RISK_REJECTED_INSUFFICIENT_BALANCE"
     MIN_NOTIONAL = "RISK_REJECTED_MIN_NOTIONAL"

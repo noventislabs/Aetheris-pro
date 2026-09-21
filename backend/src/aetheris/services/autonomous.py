@@ -52,22 +52,20 @@ from aetheris.domain.autonomous import (
     AutonomousStatus,
 )
 from aetheris.domain.enums import OrderSide, PositionSide, Timeframe, TradingMode
+from aetheris.domain.leverage import LeverageDecision
 from aetheris.domain.market import Candle, Symbol
-from aetheris.domain.paper import PaperAccount, PaperExitReason, RiskLockState
+from aetheris.domain.paper import PaperAccount, PaperExitReason
 from aetheris.domain.strategy import StrategyBias, StrategyResult, StrategyStatus
 from aetheris.engines.paper.engine import SubmitOrderRequest
-from aetheris.engines.risk.engine import evaluate as risk_evaluate
-from aetheris.engines.risk.policy import (
-    RiskAccountView,
-    RiskMarketView,
-    RiskPolicy,
-    RiskProposal,
-    RiskVerdict,
-)
 from aetheris.services.market_data import MarketDataService
-from aetheris.services.paper import PaperTradingService, mark_from_observation
+from aetheris.services.paper import PaperTradingService
 
-__all__ = ["AutonomousLoop", "build_client_order_id"]
+__all__ = ["AUTONOMOUS_ORIGIN", "AutonomousLoop", "build_client_order_id"]
+
+#: Identifies the caller to the risk authority, which uses it to pick the
+#: cooldown that belongs to this cadence. It confers no privilege: the
+#: engine rules identically whichever origin proposed the order.
+AUTONOMOUS_ORIGIN = "autonomous-loop"
 
 _log = get_logger("autonomous")
 
@@ -562,80 +560,46 @@ class AutonomousLoop:
         margin = quantize_usdt(
             account.available_balance * self._config.position_size_percent / _HUNDRED
         )
-        proposal = RiskProposal(
-            symbol=symbol,
-            side=side,
-            requested_margin=margin,
-            requested_leverage=self._config.requested_leverage,
-            stop_loss_percent=self._config.stop_loss_percent,
-            take_profit_percent=self._config.take_profit_percent,
-            trailing_stop_percent=self._config.trailing_stop_percent,
-            origin="autonomous-loop",
-            bias=result.bias.value if result.bias else None,
-            conditions_met=(
-                result.long_conditions_met if side is OrderSide.BUY else result.short_conditions_met
-            ),
-            conditions_total=result.conditions_total,
-        )
-
-        listed = await self._symbol_metadata(symbol)
-        mark = mark_from_observation(symbol, await self._market_data.get_ticker(symbol))
-        verdict = risk_evaluate(
-            proposal,
-            account=self._account_view(account, symbol),
-            market=RiskMarketView(
-                symbol=symbol,
-                status=mark.status,
-                age_seconds=mark.age_seconds,
-                last_price=mark.last_price,
-                atr_percent=atr_percent,
-                filters=listed.filters if listed else None,
-                exchange_max_leverage=(
-                    Decimal(listed.max_leverage)
-                    if listed is not None and listed.max_leverage is not None
-                    else None
-                ),
-            ),
-            policy=self._policy(),
-            now=now,
-        )
-
-        if not verdict.approved:
-            self._refusals += 1
-            return [
-                self._record(
-                    symbol=symbol,
-                    action=AutonomousAction.REFUSED,
-                    detail=verdict.detail,
-                    now=now,
-                    result=result,
-                    bar_close=bar_close,
-                    atr_percent=atr_percent,
-                    side=side,
-                    client_order_id=client_order_id,
-                    rejection_code=verdict.code,
-                    rejection_detail=verdict.detail,
-                    verdict=verdict,
-                    proposed_margin=margin,
-                    source=source,
-                )
-            ]
-
-        # Approved by the risk engine. The paper gate now checks again,
-        # independently, before anything fills.
+        # The loop proposes. It does **not** rule: ADR 0006 made
+        # PaperTradingService the single risk authority, so submitting is how
+        # the risk engine is reached. Evaluating here as well would be a second
+        # verdict, and the whole point of the ADR is that there is one.
         outcome = await self._paper.submit_order(
             SubmitOrderRequest(
                 symbol=symbol,
                 side=side,
-                margin=verdict.approved_margin,
+                margin=margin,
                 stop_loss_percent=self._config.stop_loss_percent,
                 take_profit_percent=self._config.take_profit_percent,
                 trailing_stop_percent=self._config.trailing_stop_percent,
                 client_order_id=client_order_id,
             ),
             requested_leverage=self._config.requested_leverage,
-            risk_verdict_detail=verdict.detail,
+            origin=AUTONOMOUS_ORIGIN,
         )
+
+        if not outcome.accepted:
+            self._refusals += 1
+            return [
+                self._record(
+                    symbol=symbol,
+                    action=AutonomousAction.REFUSED,
+                    detail=outcome.detail or "Refused.",
+                    now=now,
+                    result=result,
+                    bar_close=bar_close,
+                    atr_percent=atr_percent,
+                    side=side,
+                    client_order_id=client_order_id,
+                    rejection_code=outcome.order.rejection_code,
+                    rejection_detail=outcome.order.rejection_detail,
+                    leverage=outcome.order.leverage,
+                    risk_max_leverage=outcome.risk_max_leverage,
+                    checks_performed=outcome.checks_performed,
+                    proposed_margin=margin,
+                    source=source,
+                )
+            ]
 
         if outcome.accepted:
             self._entries += 1
@@ -644,7 +608,7 @@ class AutonomousLoop:
                 self._record(
                     symbol=symbol,
                     action=AutonomousAction.ENTERED,
-                    detail=outcome.detail or verdict.detail,
+                    detail=outcome.detail or "Entered.",
                     now=now,
                     result=result,
                     bar_close=bar_close,
@@ -653,72 +617,19 @@ class AutonomousLoop:
                     client_order_id=client_order_id,
                     order_id=outcome.order.order_id,
                     position_id=outcome.position.position_id if outcome.position else None,
-                    verdict=verdict,
-                    proposed_margin=verdict.approved_margin,
+                    leverage=outcome.order.leverage,
+                    risk_max_leverage=outcome.risk_max_leverage,
+                    checks_performed=outcome.checks_performed,
+                    proposed_margin=outcome.position.margin if outcome.position else margin,
                     source=source,
                 )
             ]
-
-        self._refusals += 1
-        return [
-            self._record(
-                symbol=symbol,
-                action=AutonomousAction.REFUSED,
-                detail=(
-                    f"The risk engine approved this proposal and the paper gate refused "
-                    f"it independently: {outcome.detail}"
-                ),
-                now=now,
-                result=result,
-                bar_close=bar_close,
-                atr_percent=atr_percent,
-                side=side,
-                client_order_id=client_order_id,
-                order_id=outcome.order.order_id,
-                rejection_code=outcome.order.rejection_code,
-                rejection_detail=outcome.order.rejection_detail,
-                verdict=verdict,
-                proposed_margin=verdict.approved_margin,
-                source=source,
-            )
-        ]
 
     async def _symbol_metadata(self, symbol: str) -> Symbol | None:
         try:
             return await self._market_data.get_symbol(symbol)
         except SymbolNotFoundError:
             return None
-
-    def _policy(self) -> RiskPolicy:
-        risk = self._settings.risk
-        return RiskPolicy(
-            max_open_positions=risk.max_open_positions,
-            max_position_notional=risk.max_position_notional,
-            max_portfolio_exposure=risk.max_portfolio_exposure,
-            max_leverage=risk.max_leverage,
-            max_data_age_seconds=risk.max_data_age_seconds,
-            entry_cooldown_seconds=float(risk.entry_cooldown_seconds),
-            max_atr_percent=self._config.max_atr_percent,
-        )
-
-    def _account_view(self, account: PaperAccount, symbol: str) -> RiskAccountView:
-        return RiskAccountView(
-            balance=account.balance,
-            available_balance=account.available_balance,
-            equity=account.equity,
-            margin_used=account.margin_used,
-            open_symbols=frozenset(p.symbol for p in account.positions),
-            open_position_count=len(account.positions),
-            total_notional=sum((p.notional for p in account.positions), ZERO),
-            session_realized_pnl=account.session.realized_pnl,
-            daily_profit_target=account.session.profit_target,
-            daily_loss_limit=account.session.loss_limit,
-            lock_state=account.session.lock_state,
-            lock_reason=account.session.lock_reason,
-            emergency_stopped=account.session.lock_state is RiskLockState.EMERGENCY_STOP,
-            mode_enabled=self._settings.is_mode_enabled(TradingMode.PAPER),
-            last_entry_at=self._last_entry_at.get(symbol),
-        )
 
     # ------------------------------------------------------------------
     # The decision log
@@ -747,7 +658,9 @@ class AutonomousLoop:
         trade_id: str | None = None,
         rejection_code: RiskRejectionCode | None = None,
         rejection_detail: str | None = None,
-        verdict: RiskVerdict | None = None,
+        leverage: LeverageDecision | None = None,
+        risk_max_leverage: Decimal | None = None,
+        checks_performed: tuple[str, ...] = (),
         proposed_margin: Decimal | None = None,
         realized_pnl: Decimal | None = None,
         source: str | None = None,
@@ -779,9 +692,9 @@ class AutonomousLoop:
             conditions_total=result.conditions_total if result else None,
             rejection_code=rejection_code,
             rejection_detail=rejection_detail,
-            leverage=verdict.leverage if verdict else None,
-            risk_max_leverage=verdict.risk_max_leverage if verdict else None,
-            checks_performed=verdict.checks_performed if verdict else (),
+            leverage=leverage,
+            risk_max_leverage=risk_max_leverage,
+            checks_performed=checks_performed,
             side=side,
             position_side=position_side,
             exit_reason=exit_reason,

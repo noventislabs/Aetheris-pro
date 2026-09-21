@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
 
+from aetheris.analysis.volatility import VolatilityStatus
 from aetheris.core.errors import RiskRejectionCode
 from aetheris.core.freshness import DataStatus
 from aetheris.domain.enums import OrderSide
@@ -111,6 +112,12 @@ class RiskMarketView:
     #: Measured over closed bars. None when it could not be computed -- which
     #: is a refusal, not a zero.
     atr_percent: Decimal | None = None
+    #: *Why* there is no ATR, when there is none. Carried separately so the
+    #: refusal can name the actual condition: too little history reads very
+    #: differently from a stale feed, and collapsing both into STALE_DATA tells
+    #: a user to wait for fresher data that will never help.
+    volatility_status: VolatilityStatus = VolatilityStatus.MEASURED
+    volatility_detail: str | None = None
     filters: SymbolFilters | None = None
     #: The venue's real per-symbol ceiling. **Null in this build**, because
     #: leverage brackets are served only from an authenticated endpoint. Never

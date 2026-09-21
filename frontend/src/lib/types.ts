@@ -609,6 +609,10 @@ export interface PaperOrderResult {
   trade: PaperTrade | null;
   account: PaperAccount;
   detail: string | null;
+  /** Which risk checks ran, in order — including the ones that passed. */
+  checks_performed: string[];
+  /** The ceiling the risk engine derived, reported whether or not it bound. */
+  risk_max_leverage: string | null;
 }
 
 export interface PaperTickResult {
