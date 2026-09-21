@@ -2,8 +2,8 @@
 
 Professional crypto trading and quantitative research platform.
 
-> **Phases 0, 2, 3 and 4 of 10 — foundation, market data, scanner, terminal,
-> indicators and strategy analysis.**
+> **Phases 0, 2, 3, 4 and 5 of 10 — foundation, market data, scanner,
+> terminal, indicators, strategy analysis and backtesting.**
 > This build places **no orders in any mode**. It has no database, no
 > strategies and no trading engines. What exists is the foundation
 > (configuration, exact money arithmetic, data provenance, the error and risk
@@ -11,7 +11,8 @@ Professional crypto trading and quantitative research platform.
 > data layer: dynamic symbol discovery, tickers and OHLCV, each carrying
 > provenance and a freshness status, plus a bounded market scanner with a
 > deterministic — and fully published — Market Opportunity Score, eleven
-> technical indicators, and a rule-based strategy analysis layer.
+> technical indicators, a rule-based strategy analysis layer, and a
+> historical backtesting engine.
 >
 > Ask the running service what it can do: `GET /api/v1/system/capabilities`.
 
@@ -55,6 +56,9 @@ These are enforced by code and tests, not by convention:
    Approval requires the venue's real per-symbol ceiling *and* the risk
    engine's — both unknown today, so nothing is ever approved. An unknown
    ceiling is never permission.
+9. **A backtest is a simulation, not a forecast.** Signals fill at the next
+   bar's open, intrabar ambiguity always resolves against the trade, and every
+   result carries its assumptions, its warnings and what was not modelled.
 
 ## Trading defaults
 
@@ -91,6 +95,8 @@ test asserts it.
 | `/api/v1/analysis/strategies` | Registered strategies and their rules |
 | `/api/v1/analysis/{symbol}/indicators` | Calculate a bounded indicator set |
 | `/api/v1/analysis/{symbol}/strategy` | Rule-based bias — analysis only |
+| `/api/v1/backtest/method` | Fill model, and what it does not model |
+| `/api/v1/backtest/{symbol}` | Historical simulation over past candles |
 
 See [docs/exchange.md](docs/exchange.md) for the exchange layer in detail.
 
@@ -126,7 +132,7 @@ backend/           FastAPI service (Python 3.12+)
   tests/           unit + integration
 docs/              architecture, setup, ADRs
 frontend/          Next.js terminal (read-only)
-  src/app/         markets · scanner routes
+  src/app/         markets · scanner · backtest routes
   src/components/  chart, table, search, data states
   src/lib/         typed API client, formatting, polling hook
 ```
@@ -145,6 +151,8 @@ frontend/          Next.js terminal (read-only)
   the no-look-ahead design
 - [Strategies](docs/strategies.md) — the rule set, the freshness gate, and
   the leverage request/approval architecture
+- [Backtesting](docs/backtesting.md) — the fill model, its pessimism rules,
+  the metrics and what is deliberately not simulated
 - [Setup](docs/setup.md) — environment, commands, quality gates
 - [ADRs](docs/adr/) — recorded decisions, including the open database question
 
@@ -175,7 +183,7 @@ pnpm build
 | 2 | Exchange abstraction, Binance Futures market data | **complete** |
 | 3 | Market terminal, scanner, frontend | **complete** |
 | 4 | Indicators, strategy engine | **complete** (SMC deferred) |
-| 5 | Backtesting, optimisation | not started |
+| 5 | Backtesting engine | **complete** (optimisation deferred) |
 | 6 | Paper trading engine | not started |
 | 7 | Risk engine, portfolio | not started |
 | 8 | Order execution, testnet | not started |

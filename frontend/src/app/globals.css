@@ -735,3 +735,66 @@ tbody tr:hover td:first-child { background: var(--bg-hover); }
   .cond-list li { grid-template-columns: 14px minmax(0, 1fr); }
   .cond-list li .cond-detail { grid-column: 2; }
 }
+
+/* ---------- phase 5: backtest ---------- */
+
+.bt-form {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.bt-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+
+.field { display: grid; gap: 3px; min-width: 0; }
+
+.field > span {
+  font-size: 10px;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.field .input { width: 100px; }
+
+.field-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--text-dim);
+  padding-bottom: 6px;
+}
+
+.run-button {
+  padding: 6px 16px;
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: #0a0d12;
+  font-weight: 600;
+  font-size: 13px;
+  border-radius: var(--radius);
+}
+
+.run-button:hover { filter: brightness(1.1); }
+
+.assumption-list {
+  margin: 0;
+  padding: 10px 12px 10px 28px;
+  display: grid;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+@media (max-width: 720px) {
+  .field .input { width: 100%; }
+  .field { flex: 1 1 110px; }
+  .run-button { width: 100%; }
+}

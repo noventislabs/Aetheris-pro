@@ -15,6 +15,7 @@
 
 import type {
   ApiErrorBody,
+  BacktestResult,
   IndicatorCatalogue,
   IndicatorSet,
   StrategyResult,
@@ -314,6 +315,68 @@ export function getStrategy(
   return request(
     `/api/v1/analysis/${encodeURIComponent(symbol)}/strategy?${params}`,
     isStrategyResult,
+    signal,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Phase 5: historical simulation
+// ---------------------------------------------------------------------------
+
+function isBacktestResult(value: unknown): value is BacktestResult {
+  return (
+    isRecord(value) &&
+    hasString(value, "status") &&
+    hasString(value, "symbol") &&
+    hasString(value, "label") &&
+    hasString(value, "disclaimer") &&
+    Array.isArray(value["trades"]) &&
+    Array.isArray(value["equity_curve"]) &&
+    Array.isArray(value["assumptions"])
+  );
+}
+
+export interface BacktestParams {
+  timeframe: Timeframe;
+  limit: number;
+  startingBalance: string;
+  positionSizePercent: string;
+  leverage: string;
+  feeBps: string;
+  slippageBps: string;
+  stopLossPercent: string | null;
+  takeProfitPercent: string | null;
+  trailingStopPercent: string | null;
+  allowLong: boolean;
+  allowShort: boolean;
+}
+
+export function runBacktest(
+  symbol: string,
+  params: BacktestParams,
+  signal?: AbortSignal,
+): Promise<BacktestResult> {
+  const query = new URLSearchParams({
+    timeframe: params.timeframe,
+    limit: String(params.limit),
+    starting_balance: params.startingBalance,
+    position_size_percent: params.positionSizePercent,
+    leverage: params.leverage,
+    fee_bps: params.feeBps,
+    slippage_bps: params.slippageBps,
+    allow_long: String(params.allowLong),
+    allow_short: String(params.allowShort),
+  });
+  // Optional exits are omitted entirely rather than sent empty, so the backend
+  // sees "not configured" rather than a value it must interpret.
+  if (params.stopLossPercent) query.set("stop_loss_percent", params.stopLossPercent);
+  if (params.takeProfitPercent) query.set("take_profit_percent", params.takeProfitPercent);
+  if (params.trailingStopPercent)
+    query.set("trailing_stop_percent", params.trailingStopPercent);
+
+  return request(
+    `/api/v1/backtest/${encodeURIComponent(symbol)}?${query}`,
+    isBacktestResult,
     signal,
   );
 }

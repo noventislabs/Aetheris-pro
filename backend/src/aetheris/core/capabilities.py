@@ -30,7 +30,7 @@ class CapabilityStatus(StrEnum):
 #: Phases whose work is merged and tested. A capability may only be marked
 #: AVAILABLE if its phase appears here, which keeps the registry from
 #: drifting ahead of delivery one optimistic edit at a time.
-DELIVERED_PHASES: frozenset[int] = frozenset({0, 2, 3, 4})
+DELIVERED_PHASES: frozenset[int] = frozenset({0, 2, 3, 4, 5})
 
 
 class Capability(BaseModel):
@@ -199,9 +199,15 @@ CAPABILITIES: tuple[Capability, ...] = (
     Capability(
         key="backtest.engine",
         name="Backtesting engine",
-        status=CapabilityStatus.PLANNED,
+        status=CapabilityStatus.AVAILABLE,
         phase=5,
-        detail="Historical simulation with fees, slippage and drawdown metrics. Not started.",
+        detail=(
+            "Historical simulation with fees, slippage, stops, targets, trailing stops "
+            "and a simplified liquidation model. Signals fill at the next bar's open "
+            "and intrabar ambiguity always resolves against the trade. Funding, "
+            "partial fills and maintenance-margin tiers are NOT modelled and are "
+            "listed on every result."
+        ),
     ),
     Capability(
         key="optimize.hyperparameters",

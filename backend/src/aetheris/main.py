@@ -22,6 +22,7 @@ from aetheris.api.v1.router import api_router
 from aetheris.core.config import Settings, get_settings
 from aetheris.core.logging import configure_logging, get_logger
 from aetheris.services.analysis import AnalysisService
+from aetheris.services.backtest import BacktestService
 from aetheris.services.market_data import MarketDataService
 from aetheris.services.scanner import ScannerService
 
@@ -84,6 +85,7 @@ def create_app(
     app.state.market_data_service = MarketDataService(exchange)
     app.state.scanner_service = ScannerService(exchange, settings.scanner, settings.market_data)
     app.state.analysis_service = AnalysisService(exchange, settings.analysis)
+    app.state.backtest_service = BacktestService(exchange, settings.backtest)
 
     # Middleware executes bottom-up, so RequestContextMiddleware is added last
     # and therefore runs first -- every log line below it carries a request ID.

@@ -364,7 +364,8 @@ def test_capabilities_report_indicators_and_strategy_as_available(
     assert by_key["strategy.engine"]["status"] == "AVAILABLE"
     # Still unbuilt, still unclaimed.
     assert by_key["analysis.smc"]["status"] == "PLANNED"
-    assert by_key["backtest.engine"]["status"] == "PLANNED"
+    # Backtesting shipped in phase 5, in the commit that landed its tests.
+    assert by_key["backtest.engine"]["status"] == "AVAILABLE"
     assert by_key["paper.engine"]["status"] == "PLANNED"
     assert by_key["ai.analysis"]["status"] == "PLANNED"
     assert by_key["execution.live"]["status"] == "PLANNED"

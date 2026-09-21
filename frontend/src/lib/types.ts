@@ -348,3 +348,114 @@ export interface LeverageDecision {
   inputs: Record<string, string>;
   note: string;
 }
+
+// ---------------------------------------------------------------------------
+// Phase 5: historical simulation
+// ---------------------------------------------------------------------------
+
+export type BacktestStatus =
+  | "COMPLETED"
+  | "INSUFFICIENT_DATA"
+  | "UNAVAILABLE"
+  | "ERROR";
+
+export type ExitReason =
+  | "SIGNAL_FLIP"
+  | "STOP_LOSS"
+  | "TAKE_PROFIT"
+  | "TRAILING_STOP"
+  | "LIQUIDATION"
+  | "END_OF_DATA";
+
+export interface BacktestConfig {
+  starting_balance: string;
+  position_size_percent: string;
+  /** A simulation input only. It authorises nothing and sets no leverage. */
+  leverage: string;
+  fee_bps: string;
+  slippage_bps: string;
+  stop_loss_percent: string | null;
+  take_profit_percent: string | null;
+  trailing_stop_percent: string | null;
+  allow_long: boolean;
+  allow_short: boolean;
+}
+
+export interface BacktestTrade {
+  side: "LONG" | "SHORT";
+  entry_time: string;
+  exit_time: string;
+  entry_price: string;
+  exit_price: string;
+  quantity: string;
+  notional: string;
+  margin: string;
+  leverage: string;
+  exit_reason: ExitReason;
+  bars_held: number;
+  gross_pnl: string;
+  fees: string;
+  net_pnl: string;
+  return_percent: string;
+  equity_after: string;
+  max_adverse_excursion_percent: string | null;
+  max_favourable_excursion_percent: string | null;
+}
+
+export interface EquityPoint {
+  time: string;
+  equity: string;
+  drawdown_percent: string;
+  in_position: boolean;
+}
+
+export interface BacktestMetrics {
+  total_trades: number;
+  winning_trades: number;
+  losing_trades: number;
+  breakeven_trades: number;
+  win_rate_percent: string | null;
+  net_pnl: string;
+  gross_profit: string;
+  gross_loss: string;
+  total_fees: string;
+  return_percent: string;
+  /** Null when there are no losing trades — undefined, not infinity. */
+  profit_factor: string | null;
+  average_trade: string | null;
+  average_win: string | null;
+  average_loss: string | null;
+  largest_win: string | null;
+  largest_loss: string | null;
+  max_drawdown_percent: string;
+  max_drawdown_absolute: string;
+  /** Null on a flat curve — no dispersion means no defined ratio. */
+  sharpe_like_ratio: string | null;
+  exposure_percent: string;
+  starting_balance: string;
+  ending_balance: string;
+  bars_tested: number;
+  trades_open_at_end: number;
+}
+
+export interface BacktestResult {
+  status: BacktestStatus;
+  detail: string | null;
+  symbol: string;
+  timeframe: Timeframe;
+  strategy: string;
+  strategy_version: string;
+  config: BacktestConfig;
+  metrics: BacktestMetrics | null;
+  trades: BacktestTrade[];
+  equity_curve: EquityPoint[];
+  first_bar_time: string | null;
+  last_bar_time: string | null;
+  source: string | null;
+  data_status: string | null;
+  ran_at: string | null;
+  warnings: string[];
+  assumptions: string[];
+  label: string;
+  disclaimer: string;
+}

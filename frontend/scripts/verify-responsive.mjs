@@ -45,6 +45,7 @@ const VIEWPORTS = [
 const PAGES = [
   { path: "/markets", expect: ["AETHERIS", "OHLCV"] },
   { path: "/scanner", expect: ["AETHERIS", "Scanner"] },
+  { path: "/backtest", expect: ["AETHERIS", "HISTORICAL SIMULATION"] },
 ];
 
 let failures = 0;

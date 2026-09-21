@@ -1,6 +1,6 @@
 # Aetheris Pro — Architecture
 
-> Status: Phase 4 (indicators + strategy analysis). This
+> Status: Phase 5 (backtesting engine). This
 > document describes the intended shape of
 > the whole system and marks clearly which parts exist today. Anything not
 > marked **implemented** is not built, and the running service reports the same
@@ -201,6 +201,21 @@ The leverage chain (requested -> exchange ceiling -> risk ceiling -> approved)
 lives here too, and fails closed on any unknown constraint. Detail in
 [indicators.md](indicators.md) and [strategies.md](strategies.md).
 
+## 9d. Backtesting (phase 5)
+
+`analysis/backtest/` joins the pure layer and reuses phase 4 unchanged -- the
+same indicator functions and the same rule set the live terminal shows, so no
+separate backtest variant can drift from the strategy being analysed.
+
+Indicators are computed once over the whole history rather than per prefix,
+which is valid only because no indicator reads forward; a test recomputes the
+bias on truncated prefixes and requires bar-for-bar agreement, so that
+optimisation cannot silently become look-ahead.
+
+Every ambiguity resolves against the trade: signals fill at the next bar's
+open, and a bar covering both stop and target is assumed to have hit the stop.
+Detail in [backtesting.md](backtesting.md).
+
 ## 9a. Current implementation status
 
 | Area | Status |
@@ -225,7 +240,8 @@ lives here too, and fails closed on any unknown constraint. Detail in
 | Leverage request/approval architecture | implemented, always fails closed |
 | Smart Money Concepts | **not started** |
 | Websockets, funding rate, open interest | **not started** |
-| Backtesting, optimisation | **not started** (phase 5) |
+| Backtesting engine (fills, fees, slippage, drawdown) | implemented, tested |
+| Hyperparameter optimisation | **not started** |
 | Paper engine | **not started** (phase 6) |
 | Risk engine, portfolio | **not started** (phase 7) |
 | Order engine, testnet, live | **not started** (phases 8, 10) |

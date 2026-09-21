@@ -8,6 +8,7 @@ from fastapi import Depends, Request
 
 from aetheris.core.errors import UpstreamUnavailableError
 from aetheris.services.analysis import AnalysisService
+from aetheris.services.backtest import BacktestService
 from aetheris.services.market_data import MarketDataService
 from aetheris.services.scanner import ScannerService
 
@@ -47,3 +48,14 @@ def get_analysis_service(request: Request) -> AnalysisService:
 
 
 AnalysisDep = Annotated[AnalysisService, Depends(get_analysis_service)]
+
+
+def get_backtest_service(request: Request) -> BacktestService:
+    """Resolve the process-wide backtest service."""
+    service = getattr(request.app.state, "backtest_service", None)
+    if not isinstance(service, BacktestService):
+        raise UpstreamUnavailableError("Backtest service is not configured")
+    return service
+
+
+BacktestDep = Annotated[BacktestService, Depends(get_backtest_service)]

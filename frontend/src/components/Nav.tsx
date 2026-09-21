@@ -14,12 +14,12 @@ import { usePathname } from "next/navigation";
 const BUILT = [
   { href: "/markets", label: "Markets" },
   { href: "/scanner", label: "Scanner" },
+  { href: "/backtest", label: "Backtest" },
 ] as const;
 
 /** Phase in which each section is scheduled — shown so the gap is explicit. */
 const PLANNED = [
   { label: "Paper Trading", phase: 6 },
-  { label: "Backtest", phase: 5 },
   { label: "Falcon", phase: 9 },
   { label: "Watchlist", phase: 3 },
   { label: "Account", phase: 1 },

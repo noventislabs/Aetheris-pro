@@ -192,6 +192,21 @@ class AnalysisSettings(BaseSettings):
     max_series_points: int = Field(default=500, ge=0, le=1500)
 
 
+class BacktestSettings(BaseSettings):
+    """Bounds for a historical simulation.
+
+    A backtest is the most expensive read the system serves: it pulls a long
+    candle history and walks every bar. The ceiling is the venue's own
+    /klines maximum, because fetching more would mean paging and this phase
+    does not page.
+    """
+
+    model_config = SettingsConfigDict(env_prefix="AETHERIS_BACKTEST_", extra="ignore")
+
+    default_candle_limit: int = Field(default=500, ge=60, le=1500)
+    max_candle_limit: int = Field(default=1500, ge=60, le=1500)
+
+
 class Settings(BaseSettings):
     """Top-level application settings."""
 
@@ -234,6 +249,7 @@ class Settings(BaseSettings):
     market_data: MarketDataSettings = Field(default_factory=MarketDataSettings)
     scanner: ScannerSettings = Field(default_factory=ScannerSettings)
     analysis: AnalysisSettings = Field(default_factory=AnalysisSettings)
+    backtest: BacktestSettings = Field(default_factory=BacktestSettings)
 
     @model_validator(mode="after")
     def _live_requires_two_switches(self) -> Self:
