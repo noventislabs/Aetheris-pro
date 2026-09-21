@@ -14,8 +14,9 @@ The chain is `approved = min(requested, exchange_max, risk_max)` and it fails
 closed on any unknown. Phase 7 makes `risk_max_leverage` knowable — the engine
 derives it from stop distance, posted margin and the day's remaining loss
 budget. But `exchange_max_leverage` is still **unknown**: venues serve
-per-symbol leverage brackets only from an authenticated endpoint, and this
-build holds no credentials.
+per-symbol leverage brackets only from an authenticated endpoint, which the
+paper path does not use. (Phase 8b reads real brackets on the *testnet* path;
+paper is unchanged and still refuses anything above 1x.)
 
 Verified against live Binance data on 21 September 2026:
 
@@ -281,8 +282,9 @@ Three structural barriers, each asserted by a test:
 3. **The routes live under `/paper/`.** A future testnet loop needs its own
    route, its own switch and its own acknowledgement.
 
-Nothing implements `TradingPort`. No venue order path is named anywhere in the
-package. `execution.testnet` and `execution.live` remain `PLANNED`.
+The loop has no code path to the testnet venue: it reaches `/paper` only.
+Testnet execution exists as of phase 8b but is manual-only; `execution.live`
+remains `PLANNED` and no adapter reports `LIVE`.
 
 ## 11. Concurrency
 

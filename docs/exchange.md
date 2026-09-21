@@ -1,7 +1,9 @@
 # Exchange layer
 
-> Status: Phase 2. **Read-only.** This layer connects to public market data and
-> nothing else. It holds no credentials and has no code path to an order.
+> Status: Phases 2 and 8b. The **market-data** adapter described here is
+> read-only: it holds no credentials and has no code path to an order. The
+> **testnet trading** adapter is a separate, signed client that reaches the
+> Binance Demo venue only.
 
 ## 1. Shape of the layer
 

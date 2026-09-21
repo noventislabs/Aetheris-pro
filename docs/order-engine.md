@@ -1,13 +1,13 @@
-# Order engine (phase 8a)
+# Order engine (phases 8a-8b)
 
-> Status: Phase 8a. The order **lifecycle** is built: a state machine,
-> deterministic identity, and the reconciliation protocol. It reaches **no
-> venue** — nothing implements the trading port, and no venue order path is
-> named anywhere in the package.
+> Status: Phase 8b. The order **lifecycle** is built: a state machine,
+> deterministic identity, and the reconciliation protocol. Records are durable
+> in PostgreSQL, and `BinanceTestnetTradingAdapter` reaches the Binance Demo
+> venue — the testnet path only, and nothing reports `LIVE`.
 >
-> **Crash recovery is not delivered.** The protocol is written and tested; the
-> guarantee needs durable records, which is phase 8b on top of phase 1's
-> database. The registry says `order.engine: PARTIAL` for exactly this reason.
+> **Crash recovery is delivered.** A recovery pass runs at startup over the
+> durable records. It requires `DATABASE_URL`: without a configured database
+> the order lifecycle is absent entirely and nothing claims crash recovery.
 
 ## 1. The scenario this exists for
 
@@ -162,14 +162,14 @@ mode → emergency stop → RECONCILIATION PENDING → daily lock → data quali
 **Paper is unaffected.** `unreconciled_orders` defaults to zero and paper has no
 venue to be out of step with, so phase 6 and 7 behaviour is unchanged.
 
-## 6. What 8a does not do
+## 6. What 8a did not do, and what 8b since delivered
 
-| Not done | Why |
+| Item | Status now |
 |---|---|
-| Crash recovery | Records are in-memory; a restart destroys the thing a recovery pass queries. Phase 8b. |
-| Durable order records | Needs phase 1's PostgreSQL. |
-| Any venue submission | Nothing implements `TradingPort`. Phase 8c. |
-| Credentials | None exist. Phase 8c. |
+| Crash recovery | **Delivered in 8b.** A startup pass runs over durable records. Requires `DATABASE_URL`. |
+| Durable order records | **Delivered in 8b**, in PostgreSQL, with identity unique by constraint. |
+| Any venue submission | **Delivered in 8b, testnet only**, via `BinanceTestnetTradingAdapter`. No `LIVE` adapter exists. |
+| Credentials | Binance **Demo** credentials, server-side only, for the testnet path. |
 | Paper adopting this machine | Deliberately not: a simulated fill is instantaneous, and touching working phase 6 code for no behavioural gain is not worth the risk. The domain types are shared; the lifecycle is not. |
 
 ## 6a. Gaps found in the 8a review, and left open deliberately

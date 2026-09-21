@@ -156,8 +156,9 @@ had it) from `UNAVAILABLE` (had it, lost it) — only the latter is an incident.
 ## 9. Exchange layer (phase 2)
 
 `MarketDataPort` is the read-only contract every venue adapter implements;
-`TradingPort` is a declared type that **nothing implements**, so there is no
-runtime path to an order in this build. Binance-specific field names live in
+`TradingPort` is implemented by `BinanceTestnetTradingAdapter` alone, which
+reports `TESTNET` and reaches the Binance Demo venue only — an architecture
+test asserts nothing reports `LIVE`. Binance-specific field names live in
 exactly one module (`adapters/exchange/binance/parsing.py`) and never escape it
 — an architecture test fails the build if a venue name or an exchange import
 reaches `core/` or `domain/`.
@@ -230,8 +231,9 @@ over inputs, and the first that writes. Four modules, deliberately separate:
 
 It is pure in the same sense the analysis layer is: no HTTP client, no adapter,
 no framework, no venue name. `services/paper.py` is the only place it meets the
-network. That is why a bug in simulated execution cannot become a real order —
-there is nowhere to send one to, and nothing implements `TradingPort`.
+network. That is why a bug in simulated execution cannot become a real
+order — the paper engine has no venue path at all; testnet execution is a
+separate service, a separate route and a separate switch.
 
 **The repository is the seam for durability.** Swapping the in-memory store for
 a database-backed one is the whole of what persistent paper state requires; the

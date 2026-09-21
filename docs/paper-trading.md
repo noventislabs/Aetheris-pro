@@ -1,9 +1,9 @@
 # Paper trading
 
-> Status: Phase 6. **Simulation only.** No order reaches any exchange, no API
-> credential exists anywhere in this system, and no real funds are involved.
-> Paper trading is not testnet trading and not live trading — section 2 spells
-> out the difference.
+> Status: Phase 6. **Simulation only.** No *paper* order reaches any exchange
+> and no real funds are involved. Paper trading is not testnet trading and not
+> live trading — section 2 spells out the difference. Testnet execution exists
+> separately as of phase 8b, on its own routes, adapter and switch.
 
 ## 1. What it actually is
 
@@ -112,10 +112,9 @@ chain runs unchanged:
 approved = min(requested, exchange_max, risk_max)   — only if all are known
 ```
 
-Today `exchange_max` is unknown (leverage brackets come from an authenticated
-endpoint; this build holds no credentials) and `risk_max` is unknown (the risk
-engine is phase 7). So **anything above 1x is refused**, with the exact reason
-on the response:
+On the paper path `exchange_max` is unknown: leverage brackets come from an
+authenticated endpoint that this path does not use. So **anything above 1x is
+refused here**, with the exact reason on the response:
 
 ```json
 {"requested_leverage": "10", "exchange_max_leverage": null,
