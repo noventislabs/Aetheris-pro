@@ -19,6 +19,7 @@ from aetheris.adapters.exchange.ports import MarketDataPort
 from aetheris.analysis.indicators.engine import calculate_indicators
 from aetheris.analysis.indicators.prepare import prepare_candles
 from aetheris.analysis.indicators.registry import IndicatorParams
+from aetheris.analysis.setup import SetupParams, evaluate_setup
 from aetheris.analysis.strategies.registry import DataContext, evaluate
 from aetheris.analysis.strategies.trend_momentum import TrendMomentumParams
 from aetheris.core.config import AnalysisSettings
@@ -29,6 +30,7 @@ from aetheris.domain.indicators import (
     IndicatorSet,
     IndicatorStatus,
 )
+from aetheris.domain.setup import TradeSetup
 from aetheris.domain.strategy import StrategyResult
 
 
@@ -123,6 +125,43 @@ class AnalysisService:
         )
         candles = observation.value.candles if observation.value is not None else ()
         return evaluate(key, candles, context, now, params)
+
+    async def setup(
+        self,
+        symbol: str,
+        timeframe: Timeframe,
+        *,
+        params: TrendMomentumParams | None = None,
+        setup_params: SetupParams | None = None,
+        candle_limit: int | None = None,
+    ) -> TradeSetup:
+        """Score one instrument's current setup over live candles.
+
+        Deliberately the same shape as :meth:`strategy`: one observation, one
+        context, one call into a pure evaluator that owns the freshness gate.
+        The scoring itself lives in ``analysis.setup`` and is not reimplemented
+        here -- a second copy of the weights in a service would drift from the
+        published ones the first time either changed.
+        """
+        limit = self._bounded_limit(candle_limit)
+        observation = await self._exchange.get_klines(symbol, timeframe, limit=limit)
+        now = utcnow()
+
+        context = DataContext(
+            symbol=symbol.upper(),
+            timeframe=timeframe,
+            source=observation.source,
+            data_status=observation.status.value,
+            age_seconds=observation.age_seconds,
+        )
+        candles = observation.value.candles if observation.value is not None else ()
+        return evaluate_setup(
+            candles,
+            context=context,
+            now=now,
+            strategy_params=params,
+            setup_params=setup_params,
+        )
 
     def _bounded_limit(self, requested: int | None) -> int:
         if requested is None:

@@ -235,7 +235,9 @@ CAPABILITIES: tuple[Capability, ...] = (
             "independently. It measures STRATEGY ALIGNMENT, NOT A PROBABILITY OF "
             "PROFIT, a win rate or an expected return -- no model here could produce "
             "one. Historical performance is deliberately excluded from the score and "
-            "reported separately as backtest metrics."
+            "reported separately as backtest metrics. Served read-only at "
+            "GET /api/v1/analysis/{symbol}/setup, which delegates to this engine and "
+            "reimplements none of it."
         ),
     ),
     Capability(

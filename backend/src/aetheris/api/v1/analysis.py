@@ -12,6 +12,7 @@ registered indicator to run and, within published ranges, with what periods.
 
 from __future__ import annotations
 
+from decimal import Decimal
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Path, Query
@@ -23,12 +24,14 @@ from aetheris.analysis.indicators.registry import (
     IndicatorParams,
     describe_indicators,
 )
+from aetheris.analysis.setup import SetupParams
 from aetheris.analysis.strategies.registry import STRATEGY_KEYS, describe_strategies
 from aetheris.analysis.strategies.trend_momentum import TrendMomentumParams
 from aetheris.api.deps import AnalysisDep
 from aetheris.core.errors import ValidationFailedError
 from aetheris.domain.enums import Timeframe
 from aetheris.domain.indicators import IndicatorDescriptor, IndicatorSet
+from aetheris.domain.setup import StopModel, TradeSetup
 from aetheris.domain.strategy import StrategyDescriptor, StrategyResult
 
 router = APIRouter(prefix="/analysis", tags=["analysis"])
@@ -232,3 +235,60 @@ async def symbol_strategy(
             details={"supported": list(STRATEGY_KEYS)},
         )
     return await service.strategy(symbol, timeframe, strategy, params=params, candle_limit=limit)
+
+
+@router.get(
+    "/{symbol}/setup",
+    response_model=TradeSetup,
+    summary="Score the current setup — analysis only, never an instruction",
+)
+async def symbol_setup(
+    service: AnalysisDep,
+    symbol: SymbolPath,
+    params: Annotated[TrendMomentumParams, Depends()],
+    timeframe: Annotated[Timeframe, Query()] = Timeframe.H1,
+    limit: Annotated[int, Query(ge=20, le=1000)] = 300,
+    stop_model: Annotated[StopModel, Query()] = StopModel.ATR,
+    stop_percent: Annotated[Decimal, Query(gt=0, lt=90)] = Decimal(2),
+    atr_multiple: Annotated[Decimal, Query(gt=0, le=10)] = Decimal("1.5"),
+    structure_lookback: Annotated[int, Query(ge=2, le=500)] = 20,
+    take_profit_r: Annotated[Decimal, Query(gt=0, le=20)] = Decimal(2),
+) -> TradeSetup:
+    """Report the current setup for one instrument: direction, score and levels.
+
+    **The score is strategy alignment on a 0-100 scale, not a probability of
+    profit.** It measures how completely present measurements satisfy the
+    published rule set and whether the resulting trade is worth its own risk.
+    Nothing in this system produces a calibrated probability, and no field here
+    should be read as one. Historical performance is not folded in; that lives
+    in `/backtest/{symbol}` and is reported separately on purpose.
+
+    Every component carries the raw measurement behind it, so the total can be
+    recomputed by hand rather than trusted.
+
+    Four outcomes are possible and they are distinct:
+
+    * `ACTIONABLE` — a direction was found and real levels were derived.
+    * `NO_ACTIONABLE_SETUP` — evaluated fine, but the rules are NEUTRAL or no
+      safe stop exists under the chosen model. No level is invented to fill it.
+    * `INSUFFICIENT_DATA` — an indicator has not warmed up over the candles
+      requested. No value is substituted for a missing one.
+    * `STALE` — the candles are not current, or their age cannot be verified.
+
+    This route places no order. Any setup it reports remains a *proposal* to
+    the risk engine, which has final authority and can refuse it regardless of
+    score.
+    """
+    return await service.setup(
+        symbol,
+        timeframe,
+        params=params,
+        setup_params=SetupParams(
+            stop_model=stop_model,
+            stop_percent=stop_percent,
+            atr_multiple=atr_multiple,
+            structure_lookback=structure_lookback,
+            take_profit_r=take_profit_r,
+        ),
+        candle_limit=limit,
+    )

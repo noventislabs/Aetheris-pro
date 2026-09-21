@@ -9,7 +9,9 @@ whenever the suite runs, rather than going stale on a fixed date.
 
 from __future__ import annotations
 
+import math
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from typing import Any
 
 
@@ -188,6 +190,40 @@ def klines(*, count: int = 5, interval_seconds: int = 3600) -> list[list[Any]]:
         )
         for index in range(count)
     ]
+
+
+def trending_klines(
+    *, count: int = 220, interval_seconds: int = 3600, drift: str = "0.6"
+) -> list[list[Any]]:
+    """A rising series with regular pullbacks, ending with a forming bar.
+
+    ``klines()`` emits identical bars, which is right for testing transport
+    and parsing but cannot produce a directional signal: with no directional
+    movement ADX never warms up, so the strategy correctly reports
+    INSUFFICIENT_DATA. A route test that only ever saw that shape would never
+    exercise the scored path at all.
+
+    Drift plus a sine pullback is the smallest shape that yields a real
+    LONG bias -- a pure ramp pins RSI above the overbought band, which the
+    rule set also correctly refuses. Deterministic, so the test is too.
+    """
+    start = now() - timedelta(seconds=interval_seconds * (count - 1))
+    step = Decimal(drift)
+    rows: list[list[Any]] = []
+    for index in range(count):
+        wave = Decimal(str(round(10 * math.sin(2 * math.pi * index / 12), 4)))
+        close = Decimal(200) + Decimal(index) * step + wave
+        rows.append(
+            kline_row(
+                open_time=start + timedelta(seconds=interval_seconds * index),
+                interval_seconds=interval_seconds,
+                open_=f"{close:.4f}",
+                high=f"{close + Decimal('1.5'):.4f}",
+                low=f"{close - Decimal('1.5'):.4f}",
+                close=f"{close:.4f}",
+            )
+        )
+    return rows
 
 
 def stale_klines(*, count: int = 3, interval_seconds: int = 3600) -> list[list[Any]]:

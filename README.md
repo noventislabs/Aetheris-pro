@@ -319,6 +319,7 @@ PUT, PATCH or DELETE anywhere, and tests assert it.
 | `/api/v1/analysis/strategies` | Registered strategies and their rules |
 | `/api/v1/analysis/{symbol}/indicators` | Calculate a bounded indicator set |
 | `/api/v1/analysis/{symbol}/strategy` | Rule-based bias — analysis only |
+| `/api/v1/analysis/{symbol}/setup` | Scored setup: direction, components, regime, levels |
 | `/api/v1/backtest/method` | Fill model, and what it does not model |
 | `/api/v1/backtest/{symbol}` | Historical simulation over past candles |
 | `/api/v1/paper/method` | Paper fill model, gaps, refusal vocabulary |

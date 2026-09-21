@@ -65,6 +65,7 @@ from different constants.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from datetime import datetime
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Final
 
@@ -75,6 +76,7 @@ from aetheris.analysis.regime import (
     classify_regime,
 )
 from aetheris.analysis.strategies import trend_momentum
+from aetheris.analysis.strategies.registry import DataContext
 from aetheris.analysis.strategies.trend_momentum import TrendMomentumParams
 from aetheris.domain.enums import Timeframe
 from aetheris.domain.market import Candle
@@ -98,6 +100,7 @@ __all__ = [
     "SetupParams",
     "build_setup",
     "derive_risk_reward",
+    "evaluate_setup",
 ]
 
 #: Bump when any weight, reference or rule below changes.
@@ -414,6 +417,7 @@ def build_setup(
     data_source: str | None = None,
     data_status: str | None = None,
     data_age_seconds: float | None = None,
+    evaluated_at: datetime | None = None,
 ) -> TradeSetup:
     """Evaluate one instrument and return a complete, explainable setup.
 
@@ -460,6 +464,7 @@ def build_setup(
             data_source=data_source,
             data_status=data_status,
             data_age_seconds=data_age_seconds,
+            evaluated_at=evaluated_at,
         )
 
     values = trend_momentum.compute_indicator_values(candles, strategy_params)
@@ -552,4 +557,69 @@ def build_setup(
             f"All four {direction.value} rules hold. Setup score {score.value} of 100 "
             f"measures rule alignment, not a probability of profit."
         ),
+    )
+
+
+def evaluate_setup(
+    candles: Sequence[Candle],
+    *,
+    context: DataContext,
+    now: datetime,
+    strategy_params: TrendMomentumParams | None = None,
+    setup_params: SetupParams | None = None,
+) -> TradeSetup:
+    """Build a setup for live analysis, with the freshness gate applied.
+
+    The gate is the only difference between this and :func:`build_setup`, and
+    it is the same gate ``strategies.registry.evaluate`` applies, for the same
+    reason: a setup computed from stale candles looks identical to a real one.
+    A second, laxer convention for what counts as fresh would be worse than no
+    gate at all, because the two would disagree silently.
+
+    Two conditions refuse, and both report ``STALE`` rather than a direction:
+
+    * the venue reported anything but ``OK`` for this observation, and
+    * the observation carries no verifiable age, which is not evidence of
+      freshness even when the status is ``OK``.
+    """
+
+    def refused(detail: str) -> TradeSetup:
+        return TradeSetup(
+            symbol=context.symbol,
+            timeframe=context.timeframe,
+            strategy=trend_momentum.STRATEGY_KEY,
+            strategy_version=trend_momentum.STRATEGY_VERSION,
+            status=SetupStatus.STALE,
+            direction=SetupDirection.NO_SIGNAL,
+            detail=detail,
+            indicators_used=(*trend_momentum.REQUIRED_INDICATORS, "atr", "bollinger"),
+            candles_used=len(candles),
+            last_candle_time=candles[-1].close_time if candles else None,
+            data_source=context.source,
+            data_status=context.data_status,
+            data_age_seconds=context.age_seconds,
+            evaluated_at=now,
+        )
+
+    if context.data_status != "OK":
+        return refused(
+            f"Candle data is {context.data_status}; no setup is reported from data "
+            f"that is not current."
+        )
+    if context.age_seconds is None:
+        return refused(
+            "Candle freshness could not be verified (the venue supplied no event "
+            "timestamp), so no setup is reported. An unverifiable age is not freshness."
+        )
+
+    return build_setup(
+        candles,
+        symbol=context.symbol,
+        timeframe=context.timeframe,
+        strategy_params=strategy_params,
+        setup_params=setup_params,
+        data_source=context.source,
+        data_status=context.data_status,
+        data_age_seconds=context.age_seconds,
+        evaluated_at=now,
     )
