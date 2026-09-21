@@ -19,7 +19,6 @@ Professional crypto trading and quantitative research platform.
 > the paper balance.
 >
 > Ask the running service what it can do: `GET /api/v1/system/capabilities`.
-> See [Known drift](#known-drift) for two registry entries that lag the code.
 
 ## What this is
 
@@ -404,21 +403,6 @@ Demo credentials. It is skipped by default.
 | 8b | Durable orders, crash recovery, testnet execution and UI | **complete** |
 | 9 | AI/ML, Falcon | not started |
 | 10 | Production hardening, live controls | not started |
-
-## Known drift
-
-Two entries in the capability registry lag the code and will read as more
-conservative than the build actually is:
-
-- `persistence.database` reports `PLANNED` with "No database is configured in
-  this build", while `order.persistence` in the same registry describes orders
-  stored in PostgreSQL. The persistence layer, models and migrations exist.
-- `exchange.abstraction` says the trading port is "implemented by nothing",
-  but `BinanceTestnetTradingAdapter` implements it and reports `TESTNET`.
-
-Both are inaccurate in the safe direction — they understate what exists rather
-than overstating it. Correcting them is a code change and is deliberately not
-part of this documentation sync.
 
 ## Security
 
