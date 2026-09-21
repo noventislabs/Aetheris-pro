@@ -280,6 +280,16 @@ makes a paper size one that could actually have been submitted.
 For a 100 USDT account, prefer instruments where `step_size × price` is small,
 or raise the balance with `POST /paper/reset {"starting_balance": "1000"}`.
 
+### Narrow viewports
+
+Below 720px the stylesheet hides tables in favour of cards, a pattern the
+scanner established in phase 3. Every table on the paper desk has a card beside
+it — found the hard way: a browser check at 390px caught the positions table
+rendering at zero height, invisible on a phone, because the page had tables and
+no cards. A horizontal-overflow check had passed precisely *because* the table
+had collapsed to nothing. A component test now asserts one `.cards` block per
+`.table-scroll`.
+
 ## 12. Not modelled
 
 Funding payments · partial fills, order-book depth and queue position · maker

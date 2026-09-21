@@ -15,7 +15,13 @@ import {
   type PaperOrderParams,
 } from "@/lib/api";
 import { changeDirection, formatNumber, formatPrice, NO_VALUE } from "@/lib/format";
-import type { PaperAccount, PaperOrderResult, PaperPosition } from "@/lib/types";
+import type {
+  PaperAccount,
+  PaperOrder,
+  PaperOrderResult,
+  PaperPosition,
+  PaperTrade,
+} from "@/lib/types";
 import { useApiResource } from "@/lib/useApiResource";
 
 /**
@@ -153,6 +159,134 @@ function PositionRow({
         </button>
       </td>
     </tr>
+  );
+}
+
+/**
+ * Card fallbacks for narrow viewports.
+ *
+ * Below 720px the stylesheet hides `.table-scroll` and shows `.cards`, because
+ * a twelve-column table is unusable at 390px. A table with no card beside it
+ * therefore renders nothing at all -- which is exactly what happened here until
+ * a browser check at 390px caught the positions table collapsing to zero
+ * height. Every table on this page now has a card.
+ */
+
+function Field({ label, value, tone }: { label: string; value: string; tone?: string }) {
+  return (
+    <div>
+      <span>{label}</span>
+      <span className={`num ${tone ?? ""}`}>{value}</span>
+    </div>
+  );
+}
+
+function PositionCard({
+  position,
+  onClose,
+  busy,
+}: {
+  position: PaperPosition;
+  onClose: (symbol: string) => void;
+  busy: boolean;
+}) {
+  const pnl = position.unrealized_pnl;
+  return (
+    <article className="card">
+      <div className="card-top">
+        <span style={{ fontWeight: 600 }}>
+          {position.symbol}{" "}
+          <span className={position.side === "LONG" ? "up" : "down"}>{position.side}</span>
+        </span>
+        <span className={`num ${pnl === null ? "" : changeDirection(pnl)}`}>
+          {pnl === null ? NO_VALUE : formatNumber(pnl, 4)}
+        </span>
+      </div>
+      <div className="card-grid">
+        <Field label="Qty" value={position.quantity} />
+        <Field label="Entry" value={formatPrice(position.entry_price)} />
+        <Field
+          label="Mark"
+          value={position.mark_price === null ? NO_VALUE : formatPrice(position.mark_price)}
+        />
+        <Field label="Margin" value={formatNumber(position.margin, 2)} />
+        <Field label="Leverage" value={`${position.approved_leverage}x`} />
+        <Field
+          label="Stop"
+          value={position.stop_price ? formatPrice(position.stop_price) : NO_VALUE}
+        />
+        <Field
+          label="Target"
+          value={position.target_price ? formatPrice(position.target_price) : NO_VALUE}
+        />
+        <Field
+          label="Liquidation"
+          value={position.liquidation_price ? formatPrice(position.liquidation_price) : NO_VALUE}
+        />
+      </div>
+      <button
+        type="button"
+        className="run-button"
+        disabled={busy}
+        onClick={() => onClose(position.symbol)}
+      >
+        Close {position.symbol}
+      </button>
+    </article>
+  );
+}
+
+function TradeCard({ trade }: { trade: PaperTrade }) {
+  return (
+    <article className="card">
+      <div className="card-top">
+        <span style={{ fontWeight: 600 }}>
+          {trade.symbol}{" "}
+          <span className={trade.side === "LONG" ? "up" : "down"}>{trade.side}</span>{" "}
+          <span className="tag">{trade.exit_reason}</span>
+        </span>
+        <span className={`num ${changeDirection(trade.net_pnl)}`}>
+          {formatNumber(trade.net_pnl, 4)}
+        </span>
+      </div>
+      <div className="card-grid">
+        <Field label="Entry" value={formatPrice(trade.entry_price)} />
+        <Field label="Exit" value={formatPrice(trade.exit_price)} />
+        <Field
+          label="Return"
+          value={`${formatNumber(trade.return_percent, 2)}%`}
+          tone={changeDirection(trade.return_percent)}
+        />
+        <Field label="Fees" value={formatNumber(trade.fees, 4)} />
+      </div>
+    </article>
+  );
+}
+
+function OrderCard({ order }: { order: PaperOrder }) {
+  const refused = order.state === "REJECTED";
+  return (
+    <article className="card">
+      <div className="card-top">
+        <span style={{ fontWeight: 600 }}>
+          {order.symbol} {order.side}
+        </span>
+        <span className={refused ? "down" : "up"}>{order.state}</span>
+      </div>
+      <div className="card-grid">
+        <Field label="Qty" value={refused ? NO_VALUE : order.filled_quantity} />
+        <Field
+          label="Price"
+          value={order.average_fill_price ? formatPrice(order.average_fill_price) : NO_VALUE}
+        />
+      </div>
+      {order.rejection_code ? (
+        <p className="state-detail">
+          <strong>{order.rejection_code}</strong>
+          {order.rejection_detail ? ` -- ${order.rejection_detail}` : null}
+        </p>
+      ) : null}
+    </article>
   );
 }
 
@@ -481,6 +615,18 @@ export default function PaperPage() {
             </table>
           </div>
         )}
+        {account && account.positions.length > 0 ? (
+          <div className="cards">
+            {account.positions.map((position) => (
+              <PositionCard
+                key={position.position_id}
+                position={position}
+                onClose={close}
+                busy={busy}
+              />
+            ))}
+          </div>
+        ) : null}
       </section>
 
       <section className="panel">
@@ -528,6 +674,13 @@ export default function PaperPage() {
             </table>
           </div>
         )}
+        {account && account.recent_trades.length > 0 ? (
+          <div className="cards">
+            {account.recent_trades.map((trade) => (
+              <TradeCard key={trade.trade_id} trade={trade} />
+            ))}
+          </div>
+        ) : null}
       </section>
 
       <section className="panel">
@@ -580,6 +733,13 @@ export default function PaperPage() {
             </table>
           </div>
         )}
+        {account && account.recent_orders.length > 0 ? (
+          <div className="cards">
+            {account.recent_orders.map((order) => (
+              <OrderCard key={order.order_id} order={order} />
+            ))}
+          </div>
+        ) : null}
       </section>
 
       <section className="panel">

@@ -414,8 +414,9 @@ describe("PaperPage", () => {
 
   it("lists closed trades with their exit reason", async () => {
     await renderDesk(account({ positions: [], recent_trades: [trade()] }));
-    expect(screen.getByText("TAKE_PROFIT")).toBeInTheDocument();
-    expect(screen.getByText("0.7796")).toBeInTheDocument();
+    // Twice: once in the table, once in the card fallback for narrow screens.
+    expect(screen.getAllByText("TAKE_PROFIT")).toHaveLength(2);
+    expect(screen.getAllByText("0.7796").length).toBeGreaterThanOrEqual(1);
   });
 
   it("resets the account on request", async () => {
@@ -447,6 +448,22 @@ describe("PaperPage", () => {
     expect(await screen.findByText(/NOT testnet trading/)).toBeInTheDocument();
     expect(screen.getByText(/poll-driven/)).toBeInTheDocument();
     expect(screen.getByText(/Funding payments/)).toBeInTheDocument();
+  });
+
+  it("renders card fallbacks beside every table", async () => {
+    // Below 720px the stylesheet hides .table-scroll and shows .cards, so a
+    // table with no card beside it renders nothing at all on a phone. This is
+    // the regression test for exactly that: found at 390px in a browser, where
+    // the positions table had collapsed to zero height.
+    stub(account({ recent_trades: [trade()] }));
+    const { container } = render(<PaperPage />);
+    await screen.findByText("Equity");
+    await waitFor(() => {
+      const tables = container.querySelectorAll(".table-scroll");
+      const cards = container.querySelectorAll(".cards");
+      expect(tables.length).toBeGreaterThan(0);
+      expect(cards.length).toBe(tables.length);
+    });
   });
 
   it("surfaces a backend failure with its code", async () => {
