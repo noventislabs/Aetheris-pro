@@ -114,3 +114,20 @@ def get_testnet_service(request: Request) -> TestnetExecutionService:
 
 
 TestnetDep = Annotated[TestnetExecutionService, Depends(get_testnet_service)]
+
+
+def get_optional_testnet_service(request: Request) -> TestnetExecutionService | None:
+    """The testnet service if it exists, or ``None``.
+
+    Separate from :func:`get_testnet_service` on purpose. An execution route
+    must refuse when there is no service; a *status* route must be able to say
+    "unavailable" calmly, because reporting that testnet is off is the honest
+    answer rather than an error condition.
+    """
+    service = getattr(request.app.state, "testnet_service", None)
+    return service if isinstance(service, TestnetExecutionService) else None
+
+
+OptionalTestnetDep = Annotated[
+    TestnetExecutionService | None, Depends(get_optional_testnet_service)
+]

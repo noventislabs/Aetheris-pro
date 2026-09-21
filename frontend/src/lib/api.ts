@@ -14,6 +14,9 @@
  */
 
 import type {
+  ModeState,
+  SystemStatus,
+  TestnetStatus,
   ApiErrorBody,
   AutonomousDecisions,
   AutonomousStatus,
@@ -561,4 +564,137 @@ export function setAutonomous(
   signal?: AbortSignal,
 ): Promise<AutonomousStatus> {
   return request("/api/v1/paper/autonomous", isAutonomousStatus, signal, { enabled });
+}
+
+
+/* ---------------------------------------------------------------------------
+ * Trading modes and the testnet venue
+ *
+ * Nothing here talks to Binance. Every call goes to the Aetheris backend,
+ * which holds the credentials and does the signing; the browser never sees a
+ * key, a secret or a signed request, and there is no code path here that could
+ * reach an exchange directly.
+ * ------------------------------------------------------------------------- */
+
+function isModeState(value: unknown): value is ModeState {
+  return (
+    isRecord(value) &&
+    hasString(value, "mode") &&
+    typeof value["enabled"] === "boolean" &&
+    typeof value["places_real_orders"] === "boolean" &&
+    typeof value["risks_real_funds"] === "boolean"
+  );
+}
+
+function isSystemStatus(value: unknown): value is SystemStatus {
+  return (
+    isRecord(value) &&
+    hasString(value, "version") &&
+    hasString(value, "default_mode") &&
+    Array.isArray(value["modes"]) &&
+    value["modes"].every(isModeState)
+  );
+}
+
+function isTestnetStatus(value: unknown): value is TestnetStatus {
+  return (
+    isRecord(value) &&
+    typeof value["enabled"] === "boolean" &&
+    hasString(value, "connection") &&
+    hasString(value, "venue") &&
+    Array.isArray(value["positions"]) &&
+    Array.isArray(value["open_orders"])
+  );
+}
+
+/** Which trading modes this backend instance actually permits. */
+export function getSystemStatus(signal?: AbortSignal): Promise<SystemStatus> {
+  return request("/system/status", isSystemStatus, signal);
+}
+
+/**
+ * The testnet venue's state.
+ *
+ * A disabled testnet is a 200 response with `connection: "DISABLED"`, not an
+ * error: whether the venue is switched on is a fact about the deployment, and
+ * a caller that had to catch an exception to learn it would eventually catch
+ * it and render something worse.
+ */
+export function getTestnetStatus(
+  symbol: string | null,
+  signal?: AbortSignal,
+): Promise<TestnetStatus> {
+  const query = symbol ? `?symbol=${encodeURIComponent(symbol)}` : "";
+  return request(`/testnet/status${query}`, isTestnetStatus, signal);
+}
+
+export interface TestnetOrderParams {
+  symbol: string;
+  side: "BUY" | "SELL";
+  margin: string;
+  requestedLeverage: string;
+  stopLossPercent: string;
+  takeProfitPercent?: string;
+  intentKey: string;
+}
+
+/**
+ * Submit one testnet order.
+ *
+ * The backend runs the whole gauntlet behind this call -- durable record, risk
+ * engine, leverage set-and-verify, ISOLATED margin set-and-verify -- and the
+ * browser cannot skip any of it, because the browser cannot reach the venue.
+ */
+export function submitTestnetOrder(
+  params: TestnetOrderParams,
+  signal?: AbortSignal,
+): Promise<TestnetOrderView> {
+  return request("/testnet/orders", isTestnetOrderView, signal, {
+    symbol: params.symbol,
+    side: params.side,
+    margin: params.margin,
+    requested_leverage: params.requestedLeverage,
+    stop_loss_percent: params.stopLossPercent,
+    ...(params.takeProfitPercent ? { take_profit_percent: params.takeProfitPercent } : {}),
+    intent_key: params.intentKey,
+  });
+}
+
+export interface TestnetOrderView {
+  accepted: boolean;
+  detail: string;
+  replayed: boolean;
+  order_id: string | null;
+  client_order_id: string | null;
+  venue_order_id: string | null;
+  state: string | null;
+  rejection_code: string | null;
+  rejection_detail: string | null;
+  venue_leverage: string | null;
+  venue_margin_mode: string | null;
+  checks_performed: string[];
+}
+
+function isTestnetOrderView(value: unknown): value is TestnetOrderView {
+  return (
+    isRecord(value) &&
+    typeof value["accepted"] === "boolean" &&
+    hasString(value, "detail") &&
+    typeof value["replayed"] === "boolean"
+  );
+}
+
+/** Ask the venue to cancel. Losing the race to a fill is a normal outcome. */
+export function cancelTestnetOrder(
+  orderId: string,
+  signal?: AbortSignal,
+): Promise<TestnetOrderView> {
+  // An empty object rather than no body: the helper picks POST from the
+  // presence of a body, and this route is a POST with nothing to send.
+  return request(
+    `/testnet/orders/${encodeURIComponent(orderId)}/cancel`,
+    isTestnetOrderView,
+    signal,
+    {},
+  );
 }

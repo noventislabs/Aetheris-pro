@@ -43,7 +43,11 @@ from aetheris.core.errors import RiskRejectionCode
 from aetheris.domain.enums import OrderSide, OrderState, TradingMode
 from aetheris.domain.venue import MarginMode
 from aetheris.engines.order.engine import OrderLifecycleEngine
-from aetheris.services.testnet import TestnetExecutionService, TestnetOrderRequest
+from aetheris.services.testnet import (
+    TestnetExecutionService,
+    TestnetOrderRequest,
+    VenueConnection,
+)
 
 pytestmark = pytest.mark.database
 
@@ -83,6 +87,9 @@ class FakeVenue:
         self.avg_price: Decimal | None = None
         self.vanish_all = False
         self.submit_calls = 0
+        #: Rows /fapi/v2/positionRisk returns. Empty means a flat account,
+        #: which is a real answer and not the same as an unreadable venue.
+        self.open_positions: list[dict[str, Any]] = []
 
     def transport(self) -> httpx.MockTransport:
         return httpx.MockTransport(self._handle)
@@ -106,6 +113,28 @@ class FakeVenue:
                     "accountAlias": "testnet-alias",
                 }
             )
+        if path == "/fapi/v2/account":
+            # Only v2 publishes the permission flags; v3 dropped them.
+            return self._json(
+                {"canTrade": self.can_trade, "availableBalance": str(self.available_balance)}
+            )
+        if path == "/fapi/v1/openOrders":
+            return self._json(
+                [
+                    {
+                        **o,
+                        "status": self.order_status,
+                        "executedQty": str(self.filled_qty),
+                        "avgPrice": str(self.avg_price or 0),
+                    }
+                    for o in self.orders.values()
+                ]
+                if not self.vanish_all
+                else []
+            )
+        if path == "/fapi/v2/positionRisk":
+            # Flat by default: the account holds nothing unless a test says so.
+            return self._json(self.open_positions)
         if path == "/fapi/v1/income":
             return self._json([{"income": str(self.realized_pnl), "incomeType": "REALIZED_PNL"}])
         if path == "/fapi/v1/leverageBracket":
@@ -652,3 +681,150 @@ async def test_no_result_ever_carries_a_credential(
         rendered = f"{result.detail} {result.record!r}"
         assert KEY.get_secret_value() not in rendered
         assert SECRET.get_secret_value() not in rendered
+
+
+# ----------------------------------------------------------------------
+# The read-only status surface the UI consumes
+#
+# It exists so a screen never has to decide what to display when a field is
+# missing, so what matters here is that a missing field arrives as missing --
+# and that "the venue was unreachable" never looks like "the account is empty".
+# ----------------------------------------------------------------------
+
+
+async def test_the_snapshot_reports_real_venue_state(
+    service: TestnetExecutionService, venue: FakeVenue
+) -> None:
+    venue.available_balance = Decimal("7397.5")
+    snapshot = await service.venue_snapshot("BTCUSDT")
+
+    assert snapshot.connection is VenueConnection.CONNECTED
+    assert snapshot.account is not None
+    assert snapshot.account.available_balance == Decimal("7397.5")
+    assert snapshot.account.can_trade is True
+    assert snapshot.margin_mode is MarginMode.CROSSED
+    assert snapshot.observed_at is not None
+    assert snapshot.detail is None
+
+
+async def test_an_unreachable_venue_is_reported_not_raised(
+    service: TestnetExecutionService, venue: FakeVenue
+) -> None:
+    """A status panel that cannot reach the venue must render "unavailable".
+
+    Raising would make the caller decide what an exception means, and the
+    tempting decision is to show the previous numbers -- which is stale data
+    presented as current.
+    """
+    venue.can_trade = True
+    service._adapter._client._transport = httpx.MockTransport(  # type: ignore[attr-defined]
+        lambda _r: (_ for _ in ()).throw(httpx.ReadTimeout("down"))
+    )
+    snapshot = await service.venue_snapshot("BTCUSDT")
+
+    assert snapshot.connection is VenueConnection.UNAVAILABLE
+    assert snapshot.account is None
+    assert snapshot.positions == ()
+    assert snapshot.open_orders == ()
+    assert snapshot.detail is not None
+
+
+async def test_a_partial_read_says_so_rather_than_looking_complete(
+    service: TestnetExecutionService, venue: FakeVenue
+) -> None:
+    """Connected, but one call failed. An empty list would have looked like
+    "the account holds nothing", which is a different fact entirely."""
+    original = venue._handle
+
+    def flaky(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/fapi/v2/positionRisk":
+            return httpx.Response(500, json={"code": -1001, "msg": "internal"})
+        return original(request)
+
+    service._adapter._client._transport = httpx.MockTransport(flaky)  # type: ignore[attr-defined]
+    snapshot = await service.venue_snapshot()
+
+    assert snapshot.connection is VenueConnection.CONNECTED
+    assert snapshot.detail is not None
+    assert "positions" in snapshot.detail
+
+
+async def test_the_status_route_reports_disabled_without_erroring(
+    db_settings: Settings,
+) -> None:
+    """Testnet being off is a fact about the deployment, not an error.
+
+    A client that had to catch an exception to learn it would eventually catch
+    it and render something worse than the truth.
+    """
+    from fastapi.testclient import TestClient
+
+    from aetheris.main import create_app
+
+    off = db_settings.model_copy(update={"environment": "test", "testnet_trading_enabled": False})
+    with TestClient(create_app(off)) as client:
+        response = client.get("/api/v1/testnet/status")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["enabled"] is False
+    assert body["connection"] == "DISABLED"
+    assert body["account"] is None
+    assert body["positions"] == []
+    assert "does not fall back to paper" in (body["detail"] or "")
+
+
+async def test_the_status_route_never_carries_a_credential(
+    db_settings: Settings,
+) -> None:
+    from fastapi.testclient import TestClient
+
+    from aetheris.main import create_app
+
+    off = db_settings.model_copy(update={"environment": "test", "testnet_trading_enabled": False})
+    with TestClient(create_app(off)) as client:
+        raw = client.get("/api/v1/testnet/status").text
+
+    for secret in (db_settings.testnet.api_key, db_settings.testnet.api_secret):
+        if secret is not None:
+            assert secret.get_secret_value() not in raw
+
+
+async def test_positions_omit_flat_rows_and_never_invent_a_price(
+    service: TestnetExecutionService, venue: FakeVenue
+) -> None:
+    """The venue lists every symbol it knows; a zero quantity is not a position.
+
+    And a price it did not send is ``None``, not 0.00 -- a fabricated zero on a
+    position row is indistinguishable from a real one.
+    """
+    original = venue._handle
+
+    def with_positions(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/fapi/v2/positionRisk":
+            return httpx.Response(
+                200,
+                json=[
+                    {"symbol": "BTCUSDT", "positionAmt": "0", "marginType": "isolated"},
+                    {
+                        "symbol": "AVAUSDT",
+                        "positionAmt": "-41.8",
+                        "entryPrice": "0.2396",
+                        "markPrice": "",
+                        "unRealizedProfit": "",
+                        "leverage": "20",
+                        "marginType": "cross",
+                    },
+                ],
+            )
+        return original(request)
+
+    service._adapter._client._transport = httpx.MockTransport(with_positions)  # type: ignore[attr-defined]
+    positions = await service._adapter.positions()
+
+    assert [p.symbol for p in positions] == ["AVAUSDT"]  # the flat row is dropped
+    held = positions[0]
+    assert held.quantity == Decimal("-41.8")
+    assert held.mark_price is None  # unavailable, not zero
+    assert held.unrealized_pnl is None
+    assert held.margin_mode is MarginMode.CROSSED

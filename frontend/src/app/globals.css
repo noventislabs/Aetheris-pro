@@ -798,3 +798,214 @@ tbody tr:hover td:first-child { background: var(--bg-hover); }
   .field { flex: 1 1 110px; }
   .run-button { width: 100%; }
 }
+
+/* ---------------------------------------------------------------------------
+ * Testnet / Binance Demo desk
+ *
+ * The environment badge is the load-bearing element here. Everything else is
+ * ordinary terminal furniture; the badge is what stops someone reading a demo
+ * balance as their own money, so it is gold, permanent, and never subtle.
+ *
+ * Deliberately flat: no gradients, no shadows, no transitions on anything that
+ * repaints. The target machine is an i3 with 8 GB, and this page polls.
+ * ------------------------------------------------------------------------- */
+
+.tn {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gutter);
+  padding: var(--gutter);
+  max-width: 1600px;
+  margin: 0 auto;
+}
+
+.tn-header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: flex-start;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--border-strong);
+  padding-bottom: 12px;
+}
+
+.tn-header h1 {
+  font-size: 1.15rem;
+  letter-spacing: 0.02em;
+  margin: 0;
+}
+
+.tn-sub {
+  color: var(--text-dim);
+  font-size: 0.82rem;
+  margin: 4px 0 0;
+  max-width: 62ch;
+}
+
+.tn-header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.tn-env {
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  color: var(--warn);
+  border: 1px solid var(--warn);
+  border-radius: var(--radius);
+  padding: 3px 8px;
+  white-space: nowrap;
+}
+
+.tn-badge {
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.06em;
+  border-radius: var(--radius);
+  padding: 3px 8px;
+  border: 1px solid var(--border-strong);
+}
+
+.tn-ok { color: var(--up); border-color: var(--up); }
+.tn-bad { color: var(--down); border-color: var(--down); }
+.tn-warn { color: var(--warn); border-color: var(--warn); }
+.tn-off { color: var(--text-faint); }
+.tn-bad-text { color: var(--down); font-size: 0.82rem; }
+
+.tn-warning {
+  font-family: var(--mono);
+  font-size: 0.74rem;
+  letter-spacing: 0.04em;
+  color: var(--warn);
+  border: 1px solid var(--warn);
+  border-left-width: 3px;
+  border-radius: var(--radius);
+  padding: 8px 12px;
+  margin: 0;
+  background: var(--bg-panel);
+}
+
+.tn-panel {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px var(--gutter);
+}
+
+.tn-panel h2 {
+  font-size: 0.78rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin: 0 0 10px;
+}
+
+.tn-unavailable { border-color: var(--border-strong); }
+.tn-unavailable p { color: var(--text-dim); font-size: 0.85rem; margin: 0; }
+
+.tn-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 10px 16px;
+}
+
+.tn-field { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+
+.tn-field-label {
+  font-size: 0.7rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.tn-field-value {
+  font-family: var(--mono);
+  font-size: 0.92rem;
+  overflow-wrap: anywhere;
+}
+
+.tn-order {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+  align-items: end;
+}
+
+.tn-order label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.72rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  min-width: 0;
+}
+
+.tn-order input,
+.tn-order select {
+  background: var(--bg-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-family: var(--mono);
+  padding: 7px 8px;
+  width: 100%;
+  min-width: 0;
+}
+
+.tn-order button {
+  background: var(--down);
+  border: 1px solid var(--down);
+  border-radius: var(--radius);
+  color: #fff;
+  font-size: 0.8rem;
+  letter-spacing: 0.04em;
+  padding: 8px 14px;
+  cursor: pointer;
+}
+
+.tn-order button:disabled {
+  background: transparent;
+  border-color: var(--border-strong);
+  color: var(--text-faint);
+  cursor: not-allowed;
+}
+
+.tn-note, .tn-partial, .tn-empty {
+  font-size: 0.78rem;
+  color: var(--text-dim);
+  margin: 10px 0 0;
+  max-width: 78ch;
+}
+
+.tn-partial { color: var(--warn); }
+.tn-empty { margin: 0; }
+
+.tn-outcome {
+  margin-top: 12px;
+  border: 1px solid var(--border-strong);
+  border-left-width: 3px;
+  border-radius: var(--radius);
+  padding: 8px 12px;
+  font-size: 0.84rem;
+}
+
+.tn-outcome p { margin: 4px 0 0; color: var(--text-dim); }
+.tn-outcome code { font-family: var(--mono); font-size: 0.76rem; color: var(--warn); }
+
+.tag-demo { color: var(--warn); border-color: var(--warn); }
+.tag-locked { color: var(--text-faint); }
+
+@media (max-width: 820px) {
+  .tn-header { flex-direction: column; }
+  .tn-order { grid-template-columns: 1fr 1fr; }
+}
+
+@media (max-width: 390px) {
+  .tn-order { grid-template-columns: 1fr; }
+  .tn-grid { grid-template-columns: 1fr 1fr; }
+}

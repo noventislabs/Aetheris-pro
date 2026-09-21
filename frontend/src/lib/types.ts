@@ -715,3 +715,74 @@ export interface AutonomousDecisions {
   decisions: AutonomousDecision[];
   detail: string;
 }
+
+
+/* ---------------------------------------------------------------------------
+ * Trading modes and the testnet venue
+ *
+ * `enabled` is decided by the backend, never by the browser. A client that
+ * inferred availability from its own configuration would eventually offer a
+ * control the server refuses -- and the user would learn that the UI lies.
+ * ------------------------------------------------------------------------- */
+
+export type TradingModeName = "ANALYSIS" | "PAPER" | "TESTNET" | "LIVE";
+
+export interface ModeState {
+  mode: TradingModeName;
+  enabled: boolean;
+  places_real_orders: boolean;
+  risks_real_funds: boolean;
+}
+
+export interface SystemStatus {
+  name: string;
+  version: string;
+  environment: string;
+  server_time: string;
+  default_mode: TradingModeName;
+  autonomous_trading_enabled: boolean;
+  modes: ModeState[];
+}
+
+/** Stated by the backend. Never inferred from whether other fields are set. */
+export type VenueConnection = "CONNECTED" | "UNAVAILABLE" | "DISABLED";
+
+export interface VenueAccountView {
+  account_id: string;
+  position_mode: string;
+  /** `null` means the venue did not say -- not that it refused. */
+  can_trade: boolean | null;
+  available_balance: string | null;
+}
+
+export interface VenuePositionView {
+  symbol: string;
+  /** Signed: negative is short. The sign is the side. */
+  quantity: string;
+  entry_price: string | null;
+  mark_price: string | null;
+  unrealized_pnl: string | null;
+  leverage: string | null;
+  margin_mode: string | null;
+}
+
+export interface VenueOrderSummary {
+  client_order_id: string;
+  venue_order_id: string | null;
+  state: string;
+  filled_quantity: string;
+  average_fill_price: string | null;
+  observed_at: string;
+}
+
+export interface TestnetStatus {
+  enabled: boolean;
+  connection: VenueConnection;
+  venue: string;
+  detail: string | null;
+  account: VenueAccountView | null;
+  positions: VenuePositionView[];
+  open_orders: VenueOrderSummary[];
+  margin_mode: string | null;
+  observed_at: string | null;
+}

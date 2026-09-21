@@ -29,7 +29,13 @@ from aetheris.domain.market import (
     Ticker,
 )
 from aetheris.domain.order import OrderRecord, VenueOrderView
-from aetheris.domain.venue import LeverageBracket, MarginMode, PositionMode, VenueAccount
+from aetheris.domain.venue import (
+    LeverageBracket,
+    MarginMode,
+    PositionMode,
+    VenueAccount,
+    VenuePosition,
+)
 
 
 class MarketDataPort(ABC):
@@ -157,6 +163,10 @@ class TradingPort(Protocol):
 
     async def open_orders(self, *, symbol: str | None = None) -> tuple[VenueOrderView, ...]:
         """Every order the venue still considers open."""
+        ...
+
+    async def positions(self, symbol: str | None = None) -> tuple[VenuePosition, ...]:
+        """Open positions as the venue reports them, never reconstructed."""
         ...
 
     async def aclose(self) -> None:

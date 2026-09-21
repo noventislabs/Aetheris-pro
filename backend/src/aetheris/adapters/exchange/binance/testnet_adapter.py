@@ -43,7 +43,13 @@ from aetheris.adapters.exchange.errors import (
 from aetheris.core.config import TESTNET_ALLOWED_HOST, TestnetSettings
 from aetheris.domain.enums import OrderType, TradingMode
 from aetheris.domain.order import OrderRecord, VenueOrderView
-from aetheris.domain.venue import LeverageBracket, MarginMode, PositionMode, VenueAccount
+from aetheris.domain.venue import (
+    LeverageBracket,
+    MarginMode,
+    PositionMode,
+    VenueAccount,
+    VenuePosition,
+)
 
 __all__ = ["BinanceTestnetTradingAdapter", "HedgeModeNotSupportedError", "MarginModeRefusedError"]
 
@@ -430,6 +436,48 @@ class BinanceTestnetTradingAdapter:
                 f"(code {exc.venue_code}). No position is closed to force it."
             ) from None
 
+    async def positions(self, symbol: str | None = None) -> tuple[VenuePosition, ...]:
+        """Open positions, read from the venue and not reconstructed locally.
+
+        Uses the version that answers for any symbol rather than only those
+        with an open position, so a flat account returns an empty tuple instead
+        of an error -- "you hold nothing" is a real answer and the caller needs
+        to be able to tell it from "the venue could not be read".
+
+        Only non-zero positions are returned. The venue lists every symbol it
+        knows about, and a row with a quantity of zero is not a position.
+        """
+        params = {"symbol": symbol.upper()} if symbol else {}
+        payload = await self._request(_METHOD_GET, tn.POSITION_RISK_V2, params)
+        entries = payload if isinstance(payload, list) else [payload]
+
+        out: list[VenuePosition] = []
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            amount = _decimal_or_none(entry.get("positionAmt"))
+            if amount is None or amount == 0:
+                continue
+            raw_margin = str(entry.get("marginType", "")).upper()
+            out.append(
+                VenuePosition(
+                    symbol=str(entry.get("symbol", "")).upper(),
+                    quantity=amount,
+                    entry_price=_decimal_or_none(entry.get("entryPrice")),
+                    mark_price=_decimal_or_none(entry.get("markPrice")),
+                    unrealized_pnl=_decimal_or_none(entry.get("unRealizedProfit")),
+                    leverage=_decimal_or_none(entry.get("leverage")),
+                    margin_mode=(
+                        MarginMode.ISOLATED
+                        if raw_margin == "ISOLATED"
+                        else MarginMode.CROSSED
+                        if raw_margin in ("CROSSED", "CROSS")
+                        else None
+                    ),
+                )
+            )
+        return tuple(out)
+
     # ------------------------------------------------------------------
     # Orders
     # ------------------------------------------------------------------
@@ -514,3 +562,18 @@ class VenueRejection(ExchangeError):
         super().__init__(f"{path} was refused by the venue (code {venue_code}): {message}")
         self.venue_code = venue_code
         self.path = path
+
+
+def _decimal_or_none(raw: object) -> Decimal | None:
+    """Parse a venue number, or report that it could not be parsed.
+
+    ``None`` rather than zero. A price the venue did not send is unknown, and
+    an unknown rendered as 0.00 is a number nobody observed sitting on a screen
+    that looks authoritative.
+    """
+    if raw is None or raw == "":
+        return None
+    try:
+        return Decimal(str(raw))
+    except (ArithmeticError, ValueError):
+        return None

@@ -21,6 +21,7 @@ __all__ = [
     "MarginMode",
     "PositionMode",
     "VenueAccount",
+    "VenuePosition",
 ]
 
 
@@ -86,3 +87,29 @@ class LeverageBracket(BaseModel):
         if notional < self.notional_floor:
             return False
         return self.notional_cap is None or notional <= self.notional_cap
+
+
+class VenuePosition(BaseModel):
+    """One open position, as the venue reports it.
+
+    Every field is something the venue said. ``None`` where it said nothing --
+    a mark price or an unrealised PnL that could not be read is not zero, and
+    rendering it as zero would put a number on a screen that nothing observed.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    symbol: str
+    #: Signed: negative is short. The venue's own convention, kept rather than
+    #: split into a side and a magnitude, because the sign *is* the side and
+    #: re-deriving it is a chance to get it backwards.
+    quantity: Decimal
+    entry_price: Decimal | None = None
+    mark_price: Decimal | None = None
+    unrealized_pnl: Decimal | None = None
+    leverage: Decimal | None = None
+    margin_mode: MarginMode | None = None
+
+    @property
+    def is_open(self) -> bool:
+        return self.quantity != 0

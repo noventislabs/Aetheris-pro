@@ -31,6 +31,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
+from enum import StrEnum
 
 from aetheris.adapters.exchange.binance.testnet_adapter import (
     BinanceTestnetTradingAdapter,
@@ -51,7 +52,7 @@ from aetheris.core.money import ZERO, floor_to_step
 from aetheris.domain.enums import OrderSide, OrderState, OrderType, Timeframe, TradingMode
 from aetheris.domain.order import OrderIntent, OrderOrigin, OrderRecord, VenueOrderView
 from aetheris.domain.paper import RiskLockState
-from aetheris.domain.venue import MarginMode
+from aetheris.domain.venue import MarginMode, VenueAccount, VenuePosition
 from aetheris.engines.order.engine import OrderLifecycleEngine
 from aetheris.engines.order.identity import build_intent_key
 from aetheris.engines.risk.engine import evaluate as risk_evaluate
@@ -70,6 +71,8 @@ __all__ = [
     "TestnetOrderRequest",
     "TestnetOrderResult",
     "TestnetUnavailableError",
+    "VenueConnection",
+    "VenueSnapshot",
 ]
 
 #: Identifies the caller to the risk engine. Confers nothing: the engine rules
@@ -100,6 +103,35 @@ class TestnetOrderRequest:
     #: must not share one, or the second would replay the first.
     intent_key: str
     take_profit_percent: Decimal | None = None
+
+
+class VenueConnection(StrEnum):
+    """Whether the venue answered, stated rather than inferred."""
+
+    CONNECTED = "CONNECTED"
+    #: Configured, reachable in principle, and not answering right now.
+    UNAVAILABLE = "UNAVAILABLE"
+    #: Not configured or not enabled. We never had it; this is not an incident.
+    DISABLED = "DISABLED"
+
+
+@dataclass(frozen=True, slots=True)
+class VenueSnapshot:
+    """One read of the venue, for display only.
+
+    Deliberately not a trading input. Nothing in the execution path reads this;
+    it exists so a screen can show what the venue says without any component
+    having to decide what to do when a field is missing.
+    """
+
+    connection: VenueConnection
+    venue: str
+    account: VenueAccount | None = None
+    positions: tuple[VenuePosition, ...] = ()
+    open_orders: tuple[VenueOrderView, ...] = ()
+    margin_mode: MarginMode | None = None
+    observed_at: datetime | None = None
+    detail: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -352,6 +384,63 @@ class TestnetExecutionService:
             record=acked,
             detail=f"Accepted by the venue in state {view.state.value}.",
             checks_performed=verdict.checks_performed,
+        )
+
+    # ------------------------------------------------------------------
+    # Read-only venue state, for display
+    # ------------------------------------------------------------------
+
+    async def venue_snapshot(self, symbol: str | None = None) -> VenueSnapshot:
+        """Everything a screen needs, read from the venue in one pass.
+
+        Failures come back as a snapshot that says so rather than as an
+        exception, because a status panel that cannot reach the venue must
+        render "unavailable" and not a stack trace -- and must not render the
+        last known numbers as though they were current.
+
+        Nothing here is invented. A field the venue did not supply stays
+        ``None``, and the UI is responsible for showing that as unavailable
+        rather than as zero.
+        """
+        try:
+            account = await self._adapter.account_identity()
+        except ExchangeError as exc:
+            return VenueSnapshot(
+                connection=VenueConnection.UNAVAILABLE,
+                venue=self._adapter.venue_name,
+                detail=f"The venue could not be reached: {type(exc).__name__}.",
+            )
+
+        positions: tuple[VenuePosition, ...] = ()
+        orders: tuple[VenueOrderView, ...] = ()
+        partial: list[str] = []
+        try:
+            positions = await self._adapter.positions()
+        except ExchangeError:
+            partial.append("positions")
+        try:
+            orders = await self._adapter.open_orders(symbol=symbol)
+        except ExchangeError:
+            partial.append("open orders")
+
+        margin: MarginMode | None = None
+        if symbol:
+            try:
+                margin = await self._adapter.margin_mode(symbol)
+            except ExchangeError:
+                partial.append("margin mode")
+
+        return VenueSnapshot(
+            connection=VenueConnection.CONNECTED,
+            venue=self._adapter.venue_name,
+            account=account,
+            positions=positions,
+            open_orders=orders,
+            margin_mode=margin,
+            observed_at=utcnow(),
+            detail=(
+                None if not partial else f"Connected, but {', '.join(partial)} could not be read."
+            ),
         )
 
     # ------------------------------------------------------------------
