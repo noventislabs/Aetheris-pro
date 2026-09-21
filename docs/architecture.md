@@ -1,6 +1,6 @@
 # Aetheris Pro — Architecture
 
-> Status: Phase 3 (scanner + market terminal). This
+> Status: Phase 4 (indicators + strategy analysis). This
 > document describes the intended shape of
 > the whole system and marks clearly which parts exist today. Anything not
 > marked **implemented** is not built, and the running service reports the same
@@ -184,6 +184,23 @@ fields cost a request per instrument and are therefore bounded to a liquidity
 pool. Every response declares which scope it used, so a subset is never
 presented as the whole market. Full detail in [scanner.md](scanner.md).
 
+## 9c. Analysis layer (phase 4)
+
+`analysis/indicators/` and `analysis/strategies/` extend the pure layer. The
+architecture test forbids them from importing HTTP, a framework, a venue **or
+even settings** -- configuration is a deployment concern, not an arithmetic
+one -- so `calculate_indicators(candles, keys, params)` and
+`evaluate_from_candles(candles, ...)` are directly reusable by the phase 5
+backtester over historical bars.
+
+Indicator selection is a closed whitelist of registered callables and every
+parameter is a typed, bounded field; no expression, formula string or `eval`
+exists anywhere in the package.
+
+The leverage chain (requested -> exchange ceiling -> risk ceiling -> approved)
+lives here too, and fails closed on any unknown constraint. Detail in
+[indicators.md](indicators.md) and [strategies.md](strategies.md).
+
 ## 9a. Current implementation status
 
 | Area | Status |
@@ -203,7 +220,10 @@ presented as the whole market. Full detail in [scanner.md](scanner.md).
 | Bounded TTL cache, retry/backoff, rate-limit handling | implemented, tested |
 | Market scanner (bounded search/filter/sort/paging) | implemented, tested |
 | Scanner candle statistics + opportunity score | implemented, tested |
-| Indicators, SMC, strategies | **not started** (phase 4) |
+| Indicator engine (11 indicators, hand-verified) | implemented, tested |
+| Strategy analysis engine + registry | implemented, tested |
+| Leverage request/approval architecture | implemented, always fails closed |
+| Smart Money Concepts | **not started** |
 | Websockets, funding rate, open interest | **not started** |
 | Backtesting, optimisation | **not started** (phase 5) |
 | Paper engine | **not started** (phase 6) |

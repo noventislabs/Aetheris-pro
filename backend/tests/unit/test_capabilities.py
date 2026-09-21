@@ -70,9 +70,20 @@ def test_watchlist_is_only_partial() -> None:
     assert "not a persisted" in watchlist.detail
 
 
-def test_indicators_and_smc_remain_unclaimed() -> None:
-    """The terminal shows these as NOT AVAILABLE; the registry must agree."""
-    for key in ("analysis.indicators", "analysis.smc"):
-        capability = get_capability(key)
-        assert capability is not None
-        assert capability.status is CapabilityStatus.PLANNED
+def test_smc_remains_unclaimed() -> None:
+    """SMC is still unbuilt in phase 4, and the terminal must still say so.
+
+    Indicators moved to AVAILABLE in the same commit that landed their
+    implementation and hand-calculated tests; SMC did not, so it stays PLANNED
+    and no overlay is drawn for it.
+    """
+    capability = get_capability("analysis.smc")
+    assert capability is not None
+    assert capability.status is CapabilityStatus.PLANNED
+
+
+def test_indicators_became_available_with_their_implementation() -> None:
+    capability = get_capability("analysis.indicators")
+    assert capability is not None
+    assert capability.status is CapabilityStatus.AVAILABLE
+    assert capability.phase == 4

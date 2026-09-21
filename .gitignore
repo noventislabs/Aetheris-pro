@@ -37,3 +37,6 @@ target/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# Browser-verification screenshots: artefacts of a manual run, not source
+frontend/scripts/screenshots/

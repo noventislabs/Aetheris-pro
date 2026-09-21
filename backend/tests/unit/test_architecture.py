@@ -136,3 +136,70 @@ def test_no_order_endpoints_are_referenced_anywhere() -> None:
             assert order_path not in source, (
                 f"{path.relative_to(PACKAGE_ROOT)} references {order_path}"
             )
+
+
+# ----------------------------------------------------------------------
+# Phase 4: the analysis engine must stay reusable and inert
+# ----------------------------------------------------------------------
+
+ANALYSIS_ROOT = PACKAGE_ROOT / "analysis"
+
+#: The engine is the phase 5 backtester's entry point. It must run over
+#: historical bars with none of this standing up, so it may not even import
+#: configuration -- settings are a deployment concern, not an arithmetic one.
+ANALYSIS_FORBIDDEN = (*FORBIDDEN_PREFIXES, "aetheris.core.config")
+
+
+def analysis_source_files() -> list[pathlib.Path]:
+    return sorted(ANALYSIS_ROOT.rglob("*.py"))
+
+
+def test_there_are_analysis_modules_to_check() -> None:
+    assert len(analysis_source_files()) >= 8
+
+
+@pytest.mark.parametrize("path", analysis_source_files(), ids=lambda p: p.name)
+def test_analysis_layer_is_pure(path: pathlib.Path) -> None:
+    offenders = {
+        module for module in imported_modules(path) if module.startswith(ANALYSIS_FORBIDDEN)
+    }
+    assert not offenders, (
+        f"{path.relative_to(PACKAGE_ROOT)} imports {sorted(offenders)}; the analysis "
+        "engine must stay callable from a backtester with no HTTP, framework, venue "
+        "or settings machinery"
+    )
+
+
+def test_indicator_engine_imports_without_a_framework() -> None:
+    """The §21 contract, asserted by actually doing it."""
+    from aetheris.analysis.indicators.engine import calculate_indicators
+    from aetheris.analysis.strategies.registry import evaluate_from_candles
+
+    assert callable(calculate_indicators)
+    assert callable(evaluate_from_candles)
+
+
+def test_no_dynamic_execution_anywhere_in_the_package() -> None:
+    """No eval, exec, compile or __import__ reachable from a request.
+
+    Indicator and strategy selection are whitelists of registered callables;
+    a parameter can choose *which* registered maths runs, never *what* runs.
+    """
+    banned = ("eval(", "exec(", "compile(", "__import__(", "os.system", "subprocess")
+    for path in PACKAGE_ROOT.rglob("*.py"):
+        source = path.read_text(encoding="utf-8")
+        for token in banned:
+            assert token not in source, f"{path.relative_to(PACKAGE_ROOT)} contains {token!r}"
+
+
+def test_indicator_registry_cannot_resolve_an_arbitrary_name() -> None:
+    from aetheris.analysis.indicators.registry import get_spec
+
+    for hostile in ("__import__", "builtins.eval", "os.system", "../../etc/passwd"):
+        assert get_spec(hostile) is None
+
+
+def test_strategy_registry_is_a_fixed_tuple() -> None:
+    from aetheris.analysis.strategies.registry import STRATEGY_KEYS
+
+    assert STRATEGY_KEYS == ("trend_momentum",)

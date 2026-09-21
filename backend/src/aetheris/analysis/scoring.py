@@ -29,9 +29,11 @@ from aetheris.domain.scanner import OpportunityScore, ScannerMetrics, ScoreCompo
 
 __all__ = ["SCORING_METHOD", "WEIGHTS", "score_opportunity"]
 
-#: Bump when any weight or reference value changes, so a stored score can
-#: never be silently compared against one computed by different arithmetic.
-SCORING_METHOD: Final = "market-opportunity/v1"
+#: Bump when any weight, reference value or input definition changes, so a
+#: stored score is never silently compared against one computed by different
+#: arithmetic. v2: the volatility component now reads Wilder's ATR rather
+#: than a plain mean of true ranges, unifying the product on one convention.
+SCORING_METHOD: Final = "market-opportunity/v2"
 
 _ZERO: Final = Decimal(0)
 _ONE: Final = Decimal(1)

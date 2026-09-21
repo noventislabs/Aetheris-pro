@@ -269,3 +269,34 @@ def test_momentum_lookback_longer_than_history_still_works() -> None:
     assert metrics is not None
     # Falls back to the whole window rather than erroring.
     assert metrics.momentum_percent == metrics.window_return_percent
+
+
+def test_scanner_atr_uses_the_shared_wilder_convention() -> None:
+    """One ATR convention across the product, not two wearing the same name.
+
+    The scanner metric must agree with the indicator engine bar for bar; if
+    they ever diverge again a user sees two different ATRs for one instrument.
+    """
+    from aetheris.analysis.indicators.library import atr as indicator_atr
+    from aetheris.analysis.metrics import ATR_PERIOD
+
+    series = CandleSeries(
+        symbol="TESTUSDT",
+        timeframe=Timeframe.H1,
+        candles=tuple(
+            candle(
+                i,
+                open_=str(100 + i),
+                high=str(104 + i),
+                low=str(97 + i),
+                close=str(101 + i),
+            )
+            for i in range(40)
+        ),
+    )
+    metrics = compute_metrics(series, after(series))
+    assert metrics is not None
+
+    expected = indicator_atr(list(series.candles), period=ATR_PERIOD)["atr"][-1]
+    assert expected is not None
+    assert metrics.atr == expected.quantize(Decimal("0.00000001"))

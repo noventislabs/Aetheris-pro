@@ -30,7 +30,7 @@ class CapabilityStatus(StrEnum):
 #: Phases whose work is merged and tested. A capability may only be marked
 #: AVAILABLE if its phase appears here, which keeps the registry from
 #: drifting ahead of delivery one optimistic edit at a time.
-DELIVERED_PHASES: frozenset[int] = frozenset({0, 2, 3})
+DELIVERED_PHASES: frozenset[int] = frozenset({0, 2, 3, 4})
 
 
 class Capability(BaseModel):
@@ -170,11 +170,12 @@ CAPABILITIES: tuple[Capability, ...] = (
     Capability(
         key="analysis.indicators",
         name="Technical indicator engine",
-        status=CapabilityStatus.PLANNED,
+        status=CapabilityStatus.AVAILABLE,
         phase=4,
         detail=(
-            "Full indicator engine (SMA, EMA, RSI, MACD, Bollinger, VWAP, ADX...). "
-            "Not started; the scanner's own statistics are a separate, narrower set."
+            "SMA, EMA, Bollinger, VWAP, RSI, MACD, Stochastic, ATR, ADX, ROC and CCI. "
+            "Each states its convention, declares its warm-up, and is verified against "
+            "hand-calculated values and a no-look-ahead regression test."
         ),
     ),
     Capability(
@@ -186,10 +187,14 @@ CAPABILITIES: tuple[Capability, ...] = (
     ),
     Capability(
         key="strategy.engine",
-        name="Strategy engine",
-        status=CapabilityStatus.PLANNED,
+        name="Strategy analysis engine",
+        status=CapabilityStatus.AVAILABLE,
         phase=4,
-        detail="Modular, independently testable strategies. Not started.",
+        detail=(
+            "Deterministic rule-based analysis with one registered strategy "
+            "(Trend-Momentum Confluence). Produces an explained bias, never an order: "
+            "there is no execution path, and no confidence or probability is invented."
+        ),
     ),
     Capability(
         key="backtest.engine",
@@ -213,11 +218,28 @@ CAPABILITIES: tuple[Capability, ...] = (
         detail="Simulated fills, fees and PnL. Places no real orders. Not started.",
     ),
     Capability(
+        key="risk.leverage_policy",
+        name="Leverage request and approval architecture",
+        status=CapabilityStatus.PARTIAL,
+        phase=4,
+        detail=(
+            "The 1-500x request/approval chain exists and is tested, but nothing is "
+            "ever approved in this build: the venue's per-symbol ceiling needs an "
+            "authenticated endpoint and the risk engine is phase 7. Every request "
+            "fails closed with a named reason. No leverage is set and no order is "
+            "placed, in any mode."
+        ),
+    ),
+    Capability(
         key="risk.engine",
         name="Risk engine",
         status=CapabilityStatus.PLANNED,
         phase=7,
-        detail="Final authority over every order decision. Vocabulary defined; engine not built.",
+        detail=(
+            "Final authority over every order decision, including the approved "
+            "leverage. Vocabulary and the leverage constraint chain are defined; "
+            "the engine itself is not built."
+        ),
     ),
     Capability(
         key="portfolio.engine",

@@ -216,3 +216,135 @@ export interface ApiErrorBody {
     request_id: string | null;
   };
 }
+
+// ---------------------------------------------------------------------------
+// Phase 4: indicators and strategy analysis
+// ---------------------------------------------------------------------------
+
+export type IndicatorStatus =
+  | "READY"
+  | "WARMING_UP"
+  | "INSUFFICIENT_DATA"
+  | "UNAVAILABLE"
+  | "ERROR";
+
+/** Where an indicator belongs: over price, or in its own pane. */
+export type IndicatorKind = "OVERLAY" | "OSCILLATOR";
+
+export interface IndicatorDescriptor {
+  key: string;
+  name: string;
+  kind: IndicatorKind;
+  value_keys: string[];
+  description: string;
+  parameters: string[];
+  defaults: Record<string, string>;
+  /** The published formula convention, shown so a number is never unlabelled. */
+  convention: string;
+}
+
+export interface IndicatorCatalogue {
+  indicators: IndicatorDescriptor[];
+  max_per_request: number;
+  note: string;
+}
+
+export interface IndicatorPoint {
+  time: string;
+  values: Record<string, string | null>;
+}
+
+export interface IndicatorResult {
+  indicator: string;
+  name: string;
+  kind: IndicatorKind;
+  status: IndicatorStatus;
+  detail: string | null;
+  parameters: Record<string, string>;
+  value_keys: string[];
+  latest: Record<string, string | null> | null;
+  latest_time: string | null;
+  warmup_bars: number;
+  candles_used: number;
+  series: IndicatorPoint[];
+}
+
+export interface IndicatorSet {
+  symbol: string;
+  timeframe: Timeframe;
+  source: string;
+  data_status: string;
+  data_detail: string | null;
+  data_age_seconds: number | null;
+  candle_count: number;
+  last_candle_time: string | null;
+  indicators: IndicatorResult[];
+}
+
+export type StrategyBias = "LONG_BIAS" | "SHORT_BIAS" | "NEUTRAL";
+
+export type StrategyStatus =
+  | "READY"
+  | "INSUFFICIENT_DATA"
+  | "STALE"
+  | "UNAVAILABLE"
+  | "ERROR";
+
+export interface ConditionOutcome {
+  name: string;
+  satisfied: boolean;
+  detail: string;
+  values: Record<string, string>;
+}
+
+export interface StrategyResult {
+  strategy: string;
+  name: string;
+  version: string;
+  status: StrategyStatus;
+  /** Null unless status is READY: an unrunnable analysis has no finding. */
+  bias: StrategyBias | null;
+  detail: string | null;
+  symbol: string;
+  timeframe: Timeframe;
+  parameters: Record<string, string>;
+  long_conditions: ConditionOutcome[];
+  short_conditions: ConditionOutcome[];
+  long_conditions_met: number;
+  short_conditions_met: number;
+  conditions_total: number;
+  /** Always present when the analysis ran; always a rejection in this build. */
+  leverage: LeverageDecision | null;
+  indicators_used: string[];
+  candles_used: number;
+  last_candle_time: string | null;
+  source: string | null;
+  data_status: string | null;
+  data_age_seconds: number | null;
+  evaluated_at: string | null;
+  disclaimer: string;
+}
+
+/** Overlays draw on the price axis; everything else needs its own pane. */
+export function isOverlay(descriptor: IndicatorDescriptor): boolean {
+  return descriptor.kind === "OVERLAY";
+}
+
+/** Leverage architecture: 1–500x is the *candidate* range, never a permission. */
+export type LeverageOutcome = "APPROVED" | "REDUCED" | "REJECTED";
+
+export interface LeverageDecision {
+  requested_leverage: string | null;
+  /** Null when unknown. Never guessed, and never assumed to be 500. */
+  exchange_max_leverage: string | null;
+  risk_max_leverage: string | null;
+  /** Null unless every constraint is known. */
+  approved_leverage: string | null;
+  outcome: LeverageOutcome;
+  reason: string;
+  detail: string;
+  binding_constraint: string | null;
+  basis: string | null;
+  inputs: Record<string, string>;
+  note: string;
+}

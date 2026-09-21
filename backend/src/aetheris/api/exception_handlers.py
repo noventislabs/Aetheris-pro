@@ -6,9 +6,12 @@ exactly one error contract to handle and operators have one shape to grep.
 
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from pydantic import ValidationError as PydanticValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from aetheris.core.errors import AetherisError, ErrorBody, ErrorCode, ErrorResponse
@@ -27,6 +30,30 @@ _STATUS_TO_CODE = {
     501: ErrorCode.NOT_IMPLEMENTED,
     503: ErrorCode.UPSTREAM_UNAVAILABLE,
 }
+
+
+def _safe_errors(errors: object) -> list[dict[str, Any]]:
+    """Reduce pydantic error records to JSON-safe, non-echoing fields.
+
+    Two reasons to filter rather than pass through: pydantic puts the original
+    exception object in ``ctx``, which no JSON encoder can serialise, and
+    ``input`` echoes the caller's value straight back into the response body.
+    Type, location and message are what a caller needs to fix the request.
+    """
+    safe: list[dict[str, Any]] = []
+    if not isinstance(errors, list):
+        return safe
+    for error in errors:
+        if not isinstance(error, dict):
+            continue
+        safe.append(
+            {
+                "type": str(error.get("type", "")),
+                "loc": [str(part) for part in error.get("loc", ())],
+                "msg": str(error.get("msg", "")),
+            }
+        )
+    return safe
 
 
 def _request_id(request: Request) -> str | None:
@@ -50,7 +77,28 @@ def register_exception_handlers(app: FastAPI) -> None:
             error=ErrorBody(
                 code=ErrorCode.VALIDATION_FAILED,
                 message="Request validation failed",
-                details={"errors": exc.errors()},
+                details={"errors": _safe_errors(exc.errors())},
+                request_id=_request_id(request),
+            )
+        )
+        return JSONResponse(status_code=422, content=body.model_dump(mode="json"))
+
+    @app.exception_handler(PydanticValidationError)
+    async def _handle_model_validation_error(
+        request: Request, exc: PydanticValidationError
+    ) -> JSONResponse:
+        """Bad input is a 422, wherever the rejection happened.
+
+        FastAPI converts field-level failures itself, but a model-level
+        validator on a dependency-bound parameter model (``macd_fast`` must be
+        below ``macd_slow``) raises pydantic's own error, which would otherwise
+        surface as a 500 and read as our bug rather than the caller's.
+        """
+        body = ErrorResponse(
+            error=ErrorBody(
+                code=ErrorCode.VALIDATION_FAILED,
+                message="Request validation failed",
+                details={"errors": _safe_errors(exc.errors(include_url=False))},
                 request_id=_request_id(request),
             )
         )

@@ -7,6 +7,7 @@ from typing import Annotated
 from fastapi import Depends, Request
 
 from aetheris.core.errors import UpstreamUnavailableError
+from aetheris.services.analysis import AnalysisService
 from aetheris.services.market_data import MarketDataService
 from aetheris.services.scanner import ScannerService
 
@@ -35,3 +36,14 @@ def get_scanner_service(request: Request) -> ScannerService:
 
 
 ScannerDep = Annotated[ScannerService, Depends(get_scanner_service)]
+
+
+def get_analysis_service(request: Request) -> AnalysisService:
+    """Resolve the process-wide analysis service."""
+    service = getattr(request.app.state, "analysis_service", None)
+    if not isinstance(service, AnalysisService):
+        raise UpstreamUnavailableError("Analysis service is not configured")
+    return service
+
+
+AnalysisDep = Annotated[AnalysisService, Depends(get_analysis_service)]

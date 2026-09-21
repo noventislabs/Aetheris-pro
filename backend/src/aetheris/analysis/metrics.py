@@ -23,6 +23,7 @@ from decimal import ROUND_HALF_UP, Decimal
 from itertools import pairwise
 from typing import Final
 
+from aetheris.analysis.indicators.library import atr as indicator_atr
 from aetheris.domain.market import Candle, CandleSeries
 from aetheris.domain.scanner import ScannerMetrics, TrendDirection
 
@@ -43,6 +44,9 @@ DEFAULT_MOMENTUM_LOOKBACK: Final = 10
 
 #: A net move smaller than this reads as SIDEWAYS rather than as a weak trend.
 SIDEWAYS_THRESHOLD_PERCENT: Final = Decimal("0.25")
+
+#: Wilder's standard ATR period, matching the indicator engine default.
+ATR_PERIOD: Final = 14
 
 _ZERO: Final = Decimal(0)
 _HUNDRED: Final = Decimal(100)
@@ -81,25 +85,6 @@ def closed_candles(series: CandleSeries, now: datetime) -> tuple[Candle, ...]:
     while end > 0 and candles[end - 1].close_time > now:
         end -= 1
     return candles[:end]
-
-
-def _true_ranges(candles: tuple[Candle, ...]) -> list[Decimal]:
-    """Wilder's true range for each bar after the first.
-
-    The first bar is skipped rather than approximated by its own high-low:
-    mixing two different definitions into one average would make the result
-    depend on where the window happened to start.
-    """
-    ranges: list[Decimal] = []
-    for previous, current in pairwise(candles):
-        ranges.append(
-            max(
-                current.high - current.low,
-                abs(current.high - previous.close),
-                abs(current.low - previous.close),
-            )
-        )
-    return ranges
 
 
 def _trend_of(net_change_percent: Decimal) -> TrendDirection:
@@ -172,8 +157,15 @@ def compute_metrics(
     volatility = variance.sqrt() if variance > _ZERO else _ZERO
 
     # --- average true range ----------------------------------------------
-    true_ranges = _true_ranges(candles)
-    atr = _mean(true_ranges) if true_ranges else _ZERO
+    # Wilder's smoothing, via the shared indicator library, so the ATR shown
+    # in the scanner is the same number the chart shows. Before phase 4 this
+    # was a plain mean of true ranges, which is a different statistic wearing
+    # the same name -- two ATR conventions in one product is a defect, not a
+    # nuance. The opportunity score was bumped to v2 because its volatility
+    # component reads from this value.
+    atr_series = indicator_atr(candles, period=min(ATR_PERIOD, len(candles) - 1))["atr"]
+    atr_value = next((value for value in reversed(atr_series) if value is not None), None)
+    atr = atr_value if atr_value is not None else _ZERO
     atr_percent = atr / last_close * _HUNDRED
 
     # --- volume -----------------------------------------------------------

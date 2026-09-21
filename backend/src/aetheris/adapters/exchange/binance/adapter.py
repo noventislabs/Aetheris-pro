@@ -168,6 +168,14 @@ class BinanceFuturesMarketDataAdapter(MarketDataPort):
             return info.symbols
         return tuple(s for s in info.symbols if parsing.is_eligible(s))
 
+    #: Binance serves per-symbol leverage brackets only from an authenticated
+    #: endpoint, so Symbol.max_leverage stays None for public data. The
+    #: leverage decision chain treats that as unknown and fails closed rather
+    #: than assuming a ceiling. The path is deliberately not named here: the
+    #: architecture test forbids any leverage endpoint string in the package,
+    #: and that guard is worth more than the convenience of a reference.
+    LEVERAGE_BRACKETS_REQUIRE_AUTH = True
+
     async def resolve_symbol(self, symbol: str) -> Symbol:
         """Look a symbol up in the discovered universe.
 

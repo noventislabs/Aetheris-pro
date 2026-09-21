@@ -579,3 +579,159 @@ tbody tr:hover td:first-child { background: var(--bg-hover); }
   .cards { display: block; }
   .search { max-width: none; }
 }
+
+/* ---------- phase 4: indicators and strategy ---------- */
+
+.ind-selector {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.ind-group {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.ind-group-label {
+  font-size: 10px;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  min-width: 118px;
+}
+
+.ind-chips {
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
+  flex: 1;
+}
+
+.chip {
+  padding: 3px 9px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  font-size: 12px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.chip:hover:not(:disabled) { background: var(--bg-hover); color: var(--text); }
+.chip[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #0a0d12; font-weight: 600; }
+.chip:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.chip-planned {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-faint);
+  border-style: dashed;
+  cursor: not-allowed;
+}
+
+.ind-note { margin: 0; font-size: 11px; color: var(--warn); }
+
+.osc-pane { border-top: 1px solid var(--border); }
+
+.osc-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 5px 12px;
+  flex-wrap: wrap;
+}
+
+.osc-title { font-size: 12px; color: var(--text-dim); display: inline-flex; gap: 8px; align-items: baseline; }
+.osc-params { font-family: var(--mono); font-size: 10px; color: var(--text-faint); }
+.osc-latest { font-size: 11px; color: var(--text); }
+.osc-empty { padding: 14px 12px; font-size: 12px; color: var(--text-faint); }
+
+.strategy-name { font-size: 13px; margin-top: 2px; display: inline-flex; gap: 8px; align-items: center; }
+.strategy-flags { display: flex; gap: 6px; flex-wrap: wrap; }
+
+.strategy-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
+  gap: 12px;
+  padding: 12px;
+}
+
+.strategy-verdict { display: grid; gap: 6px; align-content: start; }
+
+.bias {
+  font-family: var(--mono);
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 5px 12px;
+  border-radius: var(--radius);
+  border: 1px solid;
+  justify-self: start;
+}
+
+.bias-long { color: var(--up); border-color: var(--up); background: rgb(38 169 106 / 0.1); }
+.bias-short { color: var(--down); border-color: var(--down); background: rgb(224 85 78 / 0.1); }
+.bias-neutral { color: var(--text-dim); border-color: var(--border-strong); }
+.bias-unavailable { color: var(--warn); border-color: var(--warn); font-size: 15px; }
+
+.strategy-detail { margin: 0; font-size: 12px; color: var(--text-dim); }
+
+.strategy-meta {
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 6px 12px;
+  font-size: 12px;
+}
+
+.strategy-meta div { display: grid; gap: 1px; min-width: 0; }
+.strategy-meta dt { color: var(--text-faint); font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; }
+.strategy-meta dd { margin: 0; overflow-wrap: anywhere; }
+
+.cond-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 1px;
+  background: var(--border);
+  border-top: 1px solid var(--border);
+}
+
+.cond-block { background: var(--bg-panel); padding: 10px 12px; }
+
+.cond-head {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  margin-bottom: 6px;
+}
+
+.cond-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 5px; }
+
+.cond-list li {
+  display: grid;
+  grid-template-columns: 14px 104px minmax(0, 1fr);
+  gap: 7px;
+  align-items: baseline;
+  font-size: 12px;
+}
+
+.cond-mark { font-family: var(--mono); }
+.cond-list li.met .cond-mark { color: var(--up); }
+.cond-list li.unmet .cond-mark { color: var(--text-faint); }
+.cond-name { color: var(--text-dim); text-transform: capitalize; }
+.cond-detail { color: var(--text-faint); overflow-wrap: anywhere; }
+
+@media (max-width: 720px) {
+  .strategy-body { grid-template-columns: minmax(0, 1fr); }
+  .ind-group-label { min-width: 0; flex-basis: 100%; }
+  .cond-list li { grid-template-columns: 14px minmax(0, 1fr); }
+  .cond-list li .cond-detail { grid-column: 2; }
+}

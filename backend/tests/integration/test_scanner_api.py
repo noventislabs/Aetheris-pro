@@ -236,8 +236,15 @@ def test_stale_snapshot_returns_rows_without_prices(handler: RoutingHandler) -> 
 
 
 def test_scoring_method_is_published(client: TestClient) -> None:
+    """The version is asserted deliberately.
+
+    It was bumped to v2 in phase 4 when the volatility component moved onto
+    Wilder's ATR. A stored score must never be compared against one produced
+    by different arithmetic, so this pin is the thing that forces the bump to
+    be conscious.
+    """
     body = client.get("/api/v1/scanner/scoring-method").json()
-    assert body["method"] == "market-opportunity/v1"
+    assert body["method"] == "market-opportunity/v2"
     assert sum(float(w["weight"]) for w in body["weights"]) == pytest.approx(1.0)
     assert body["min_candles"] == 15
     assert body["notes"]
@@ -257,7 +264,8 @@ def test_capabilities_report_the_scanner_as_available(client: TestClient) -> Non
     assert by_key["market.scanner"]["status"] == "AVAILABLE"
     assert by_key["analysis.scanner_metrics"]["status"] == "AVAILABLE"
     # Still unbuilt, still unclaimed.
-    assert by_key["analysis.indicators"]["status"] == "PLANNED"
+    # Indicators shipped in phase 4; SMC did not.
+    assert by_key["analysis.indicators"]["status"] == "AVAILABLE"
     assert by_key["analysis.smc"]["status"] == "PLANNED"
     assert by_key["ai.analysis"]["status"] == "PLANNED"
     assert by_key["paper.engine"]["status"] == "PLANNED"

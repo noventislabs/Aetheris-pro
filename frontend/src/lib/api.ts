@@ -15,6 +15,9 @@
 
 import type {
   ApiErrorBody,
+  IndicatorCatalogue,
+  IndicatorSet,
+  StrategyResult,
   CandleSeries,
   MarketDataStatus,
   ObservationEnvelope,
@@ -236,4 +239,81 @@ export function getScan(params: ScanParams, signal?: AbortSignal): Promise<Scann
   if (params.includeMetrics) query.set("include_metrics", "true");
   if (params.minQuoteVolume) query.set("min_quote_volume", params.minQuoteVolume);
   return request(`/api/v1/scanner?${query}`, isScannerPage, signal);
+}
+
+// ---------------------------------------------------------------------------
+// Phase 4: indicators and strategy analysis
+// ---------------------------------------------------------------------------
+
+function isIndicatorCatalogue(value: unknown): value is IndicatorCatalogue {
+  return (
+    isRecord(value) &&
+    Array.isArray(value["indicators"]) &&
+    typeof value["max_per_request"] === "number" &&
+    value["indicators"].every(
+      (entry) => isRecord(entry) && hasString(entry, "key") && hasString(entry, "kind"),
+    )
+  );
+}
+
+function isIndicatorSet(value: unknown): value is IndicatorSet {
+  return (
+    isRecord(value) &&
+    hasString(value, "symbol") &&
+    hasString(value, "source") &&
+    hasString(value, "data_status") &&
+    Array.isArray(value["indicators"]) &&
+    value["indicators"].every(
+      (entry) =>
+        isRecord(entry) && hasString(entry, "indicator") && hasString(entry, "status"),
+    )
+  );
+}
+
+function isStrategyResult(value: unknown): value is StrategyResult {
+  return (
+    isRecord(value) &&
+    hasString(value, "strategy") &&
+    hasString(value, "status") &&
+    hasString(value, "disclaimer") &&
+    Array.isArray(value["long_conditions"]) &&
+    Array.isArray(value["short_conditions"])
+  );
+}
+
+export function getIndicatorCatalogue(signal?: AbortSignal): Promise<IndicatorCatalogue> {
+  return request("/api/v1/analysis/indicators", isIndicatorCatalogue, signal);
+}
+
+export function getIndicators(
+  symbol: string,
+  timeframe: Timeframe,
+  keys: readonly string[],
+  options: { limit?: number; seriesPoints?: number } = {},
+  signal?: AbortSignal,
+): Promise<IndicatorSet> {
+  const params = new URLSearchParams({
+    indicators: keys.join(","),
+    timeframe,
+    limit: String(options.limit ?? 300),
+    series_points: String(options.seriesPoints ?? 0),
+  });
+  return request(
+    `/api/v1/analysis/${encodeURIComponent(symbol)}/indicators?${params}`,
+    isIndicatorSet,
+    signal,
+  );
+}
+
+export function getStrategy(
+  symbol: string,
+  timeframe: Timeframe,
+  signal?: AbortSignal,
+): Promise<StrategyResult> {
+  const params = new URLSearchParams({ strategy: "trend_momentum", timeframe });
+  return request(
+    `/api/v1/analysis/${encodeURIComponent(symbol)}/strategy?${params}`,
+    isStrategyResult,
+    signal,
+  );
 }

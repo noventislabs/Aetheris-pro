@@ -2,6 +2,7 @@
 
 import { useMemo, useRef, useState } from "react";
 import { formatCompact, formatPrice, toNumber } from "@/lib/format";
+import type { AlignedLine } from "@/lib/indicators";
 import type { Candle, Timeframe } from "@/lib/types";
 
 /**
@@ -74,10 +75,13 @@ export function CandleChart({
   candles,
   timeframe,
   symbol,
+  overlays = [],
 }: {
   candles: readonly Candle[];
   timeframe: Timeframe;
   symbol: string;
+  /** Price-axis indicator lines, already aligned to `candles`. */
+  overlays?: readonly AlignedLine[];
 }) {
   const svgRef = useRef<SVGSVGElement>(null);
   const [hover, setHover] = useState<number | null>(null);
@@ -88,8 +92,13 @@ export function CandleChart({
     if (bars.length === 0) return null;
     const highs = bars.map((b) => b.h);
     const lows = bars.map((b) => b.l);
-    let max = Math.max(...highs);
-    let min = Math.min(...lows);
+    // Overlays share the price axis, so a band that runs outside the candles'
+    // own range must widen the scale rather than be clipped off the panel.
+    const overlayValues = overlays.flatMap((line) =>
+      line.values.filter((value): value is number => value !== null),
+    );
+    let max = Math.max(...highs, ...(overlayValues.length ? overlayValues : highs));
+    let min = Math.min(...lows, ...(overlayValues.length ? overlayValues : lows));
     if (max === min) {
       // A perfectly flat window would divide by zero; give it a nominal band
       // so the line renders in the middle rather than at an edge.
@@ -114,7 +123,7 @@ export function CandleChart({
     const centreX = (index: number) => PAD_LEFT + slot * index + slot / 2;
 
     return { min, max, slot, bodyWidth, priceToY, volumeToY, centreX };
-  }, [bars]);
+  }, [bars, overlays]);
 
   if (!geometry || bars.length === 0) {
     return (
@@ -187,6 +196,32 @@ export function CandleChart({
               />
             </g>
           );
+        })}
+
+        {/* indicator overlays: one polyline per run of defined values, so a
+            warm-up gap breaks the stroke instead of being bridged */}
+        {overlays.map((line) => {
+          const segments: string[] = [];
+          let run: string[] = [];
+          line.values.forEach((value, index) => {
+            if (value === null || index >= bars.length) {
+              if (run.length > 1) segments.push(run.join(" "));
+              run = [];
+              return;
+            }
+            run.push(`${centreX(index).toFixed(1)},${priceToY(value).toFixed(1)}`);
+          });
+          if (run.length > 1) segments.push(run.join(" "));
+          return segments.map((points, index) => (
+            <polyline
+              key={`${line.indicator}-${line.valueKey}-${index}`}
+              points={points}
+              fill="none"
+              stroke={line.colour}
+              strokeWidth={1.3}
+              opacity={0.9}
+            />
+          ));
         })}
 
         {/* last price line */}

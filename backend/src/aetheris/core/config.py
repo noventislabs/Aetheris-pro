@@ -175,6 +175,23 @@ class ScannerSettings(BaseSettings):
     candle_limit: int = Field(default=60, ge=20, le=500)
 
 
+class AnalysisSettings(BaseSettings):
+    """Bounds for indicator and strategy analysis.
+
+    Indicators are cheap per bar but multiply by the number of indicators
+    requested, so both the candle count and the indicator count are capped
+    here rather than trusted from the caller.
+    """
+
+    model_config = SettingsConfigDict(env_prefix="AETHERIS_ANALYSIS_", extra="ignore")
+
+    default_candle_limit: int = Field(default=300, ge=20, le=1500)
+    max_candle_limit: int = Field(default=1000, ge=20, le=1500)
+    #: Trailing indicator points a response may carry. Opt-in; a full 1500-bar
+    #: MACD is 4500 numbers and would dwarf the rest of the payload.
+    max_series_points: int = Field(default=500, ge=0, le=1500)
+
+
 class Settings(BaseSettings):
     """Top-level application settings."""
 
@@ -188,7 +205,12 @@ class Settings(BaseSettings):
     environment: Literal["development", "test", "production"] = "development"
     debug: bool = False
     api_prefix: str = "/api/v1"
-    cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:3000"])
+    #: Both spellings of the local terminal. A browser treats localhost and
+    #: 127.0.0.1 as different origins, and the terminal is routinely opened on
+    #: either, so allowing only one silently breaks every request from the other.
+    cors_origins: list[str] = Field(
+        default_factory=lambda: ["http://localhost:3000", "http://127.0.0.1:3000"]
+    )
 
     # --- Mode gating (spec sections 3, 15, 16, 17) -------------------------
     default_mode: TradingMode = TradingMode.ANALYSIS
@@ -211,6 +233,7 @@ class Settings(BaseSettings):
     binance: BinanceFuturesSettings = Field(default_factory=BinanceFuturesSettings)
     market_data: MarketDataSettings = Field(default_factory=MarketDataSettings)
     scanner: ScannerSettings = Field(default_factory=ScannerSettings)
+    analysis: AnalysisSettings = Field(default_factory=AnalysisSettings)
 
     @model_validator(mode="after")
     def _live_requires_two_switches(self) -> Self:
