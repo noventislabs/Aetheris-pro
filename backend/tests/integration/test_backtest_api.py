@@ -300,13 +300,14 @@ def test_capabilities_report_the_backtester_as_available(client: TestClient) -> 
     by_key = {c["key"]: c for c in capabilities}
     assert by_key["backtest.engine"]["status"] == "AVAILABLE"
     # Optimisation left PLANNED when the bounded grid search, its objective
-    # and the enforced train/validation/test split landed. PARTIAL, not
-    # AVAILABLE: walk-forward is a tested primitive the optimizer does not
-    # yet drive, and there is no route and no persistence.
+    # and the enforced train/validation/test split landed, and walk-forward
+    # now drives evaluation too. Still PARTIAL, not AVAILABLE: there is no
+    # route and reports are not persisted, so nobody outside Python can use it.
     optimisation = by_key["optimize.hyperparameters"]
     assert optimisation["status"] == "PARTIAL"
     assert optimisation["status"] != "AVAILABLE"
-    assert "NOT yet driven by the optimizer" in optimisation["detail"]
+    assert "walk-forward now DRIVES" in optimisation["detail"]
+    assert "NOT persisted" in optimisation["detail"]
     # Searching parameters moves nothing. Live is untouched by any of it.
     assert by_key["execution.live"]["status"] == "PLANNED"
 

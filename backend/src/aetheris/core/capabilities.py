@@ -277,10 +277,13 @@ CAPABILITIES: tuple[Capability, ...] = (
             "a handful of trades. Chronological train/validation/test windows are "
             "enforced by the split type itself: selection reads validation, and the "
             "test window is scored once afterwards and never influences the choice. "
-            "PARTIAL: rolling walk-forward windows are implemented and tested as a "
-            "primitive but are NOT yet driven by the optimizer, which performs a single "
-            "three-way split; there is no API route, no persistence of reports, and no "
-            "search strategy beyond an exhaustive grid."
+            "Rolling walk-forward now DRIVES evaluation as well: each fold selects on "
+            "its training window alone and is then scored on the validation window "
+            "after it, no fold sees its own validation bars or any later fold, and a "
+            "run where every candidate was gated out says so rather than presenting a "
+            "tie-break as convergence. PARTIAL, not AVAILABLE: there is no API route, "
+            "reports are returned to the caller and NOT persisted anywhere, and the "
+            "only search strategy is an exhaustive grid."
         ),
     ),
     Capability(

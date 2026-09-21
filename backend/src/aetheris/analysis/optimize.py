@@ -84,12 +84,15 @@ from aetheris.domain.optimization import (
     ParameterSpec,
     ParameterType,
     TrialScore,
+    WalkForwardFold,
+    WalkForwardReport,
     WalkForwardWindow,
 )
 
 __all__ = [
     "DRAWDOWN_REFERENCE",
     "MAX_COMBINATIONS",
+    "MAX_WALK_FORWARD_FOLDS",
     "MIN_TRADES_FOR_OBJECTIVE",
     "OBJECTIVE_METHOD",
     "OBJECTIVE_WEIGHTS",
@@ -100,6 +103,7 @@ __all__ = [
     "optimize",
     "score_objective",
     "split_chronological",
+    "walk_forward",
     "walk_forward_windows",
 ]
 
@@ -123,6 +127,12 @@ MIN_TRADES_FOR_OBJECTIVE: Final = 20
 
 #: Hard ceiling on grid size. Each combination costs two backtests.
 MAX_COMBINATIONS: Final = 512
+
+#: Hard ceiling on folds. A walk-forward run costs
+#: ``folds x combinations`` training backtests plus one validation backtest
+#: per fold, so the two bounds multiply. Refused rather than truncated, for
+#: the same reason an oversized grid is.
+MAX_WALK_FORWARD_FOLDS: Final = 24
 
 _ZERO: Final = Decimal(0)
 _ONE: Final = Decimal(1)
@@ -488,6 +498,220 @@ def optimize(
         config=settings,
         first_bar_time=candles[0].open_time if candles else None,
         last_bar_time=candles[-1].close_time if candles else None,
+        ran_at=ran_at,
+        warnings=tuple(warnings),
+    )
+
+
+def _select_on(
+    candles: Sequence[Candle],
+    *,
+    symbol: str,
+    timeframe: Timeframe,
+    config: BacktestConfig,
+    grids: list[tuple[Decimal, ...]],
+    ordered: list[ParameterSpec],
+) -> tuple[dict[str, Decimal], TrialScore, int] | None:
+    """Score every valid candidate over one window and return the best.
+
+    Sees nothing but the bars it is handed. That is the whole mechanism: a
+    fold cannot select on data it was not given, so passing it only the
+    training slice is what makes the later validation out-of-sample.
+
+    Returns ``None`` when no candidate in the grid was even constructible.
+    """
+    best: tuple[dict[str, Decimal], TrialScore, int] | None = None
+    evaluated = 0
+    for combination in itertools.product(*grids):
+        values = {spec.name: value for spec, value in zip(ordered, combination, strict=True)}
+        params = _build_params(values)
+        if params is None:
+            continue
+        evaluated += 1
+        metrics = _evaluate(
+            candles, symbol=symbol, timeframe=timeframe, config=config, params=params
+        )
+        score = score_objective(metrics)
+        if best is None or score.value > best[1].value:
+            best = (values, score, evaluated)
+    if best is None:
+        return None
+    return (best[0], best[1], evaluated)
+
+
+def walk_forward(
+    candles: Sequence[Candle],
+    *,
+    symbol: str,
+    timeframe: Timeframe,
+    train_bars: int,
+    validation_bars: int,
+    step_bars: int | None = None,
+    config: BacktestConfig | None = None,
+    space: Sequence[ParameterSpec] | None = None,
+    max_combinations: int = MAX_COMBINATIONS,
+    max_folds: int = MAX_WALK_FORWARD_FOLDS,
+    ran_at: datetime | None = None,
+) -> WalkForwardReport:
+    """Roll a selection procedure forward and score each choice out of sample.
+
+    This is what ``walk_forward_windows`` was built for. Generating the
+    windows and not driving anything with them left the honest-evaluation
+    story half-finished: a single three-way split answers "did these
+    parameters hold up once", and that is a much weaker question than "does
+    this *procedure* keep working as the market moves".
+
+    Per fold:
+
+    1. every candidate is scored on the training window, and the best is
+       selected using **that window only**;
+    2. the selection is then scored on the validation window, which the
+       selection could not see.
+
+    No fold sees its own validation bars while choosing, and no fold sees any
+    later fold at all. Windows are sliced strictly, so each pays its own
+    warm-up rather than borrowing bars from before its start -- borrowing
+    would hand a window information from outside itself, which is the exact
+    leak this is built to prevent.
+
+    Deterministic: same candles, same space, same config, same report.
+    """
+    settings = config or BacktestConfig()
+    specs = tuple(space) if space is not None else default_parameter_space()
+    if not specs:
+        raise ValueError("an empty parameter space has nothing to search")
+
+    ordered = sorted(specs, key=lambda spec: spec.name)
+    grids = [spec.values() for spec in ordered]
+    possible = 1
+    for grid in grids:
+        possible *= len(grid)
+    if possible > max_combinations:
+        raise ValueError(
+            f"this space would evaluate {possible} combinations per fold, above the "
+            f"{max_combinations} ceiling. Narrow a range or raise the ceiling "
+            f"deliberately -- a walk-forward run pays this cost once per fold."
+        )
+
+    windows = walk_forward_windows(
+        len(candles),
+        train_bars=train_bars,
+        validation_bars=validation_bars,
+        step_bars=step_bars,
+    )
+    if len(windows) > max_folds:
+        raise ValueError(
+            f"this configuration produces {len(windows)} folds, above the {max_folds} "
+            f"ceiling. Each fold costs a full grid, so the two bounds multiply."
+        )
+
+    warnings: list[str] = []
+    if not windows:
+        warnings.append(
+            f"{len(candles)} bars cannot hold even one {train_bars}+{validation_bars} "
+            f"window, so no walk-forward evaluation was performed. This is not a "
+            f"result of zero; it is the absence of one."
+        )
+
+    warmup = trend_momentum.warmup_bars(TrendMomentumParams())
+    if windows and validation_bars <= warmup:
+        warnings.append(
+            f"Each validation window holds {validation_bars} bars, at or below the "
+            f"{warmup}-bar warm-up, so no fold can produce a trade. Windows are "
+            f"sliced strictly to prevent leakage and each pays its own warm-up."
+        )
+
+    folds: list[WalkForwardFold] = []
+    for window in windows:
+        train = candles[window.train_start : window.train_end]
+        validation = candles[window.validation_start : window.validation_end]
+
+        selection = _select_on(
+            train,
+            symbol=symbol,
+            timeframe=timeframe,
+            config=settings,
+            grids=grids,
+            ordered=ordered,
+        )
+        if selection is None:
+            continue
+        values, train_score, evaluated = selection
+
+        params = _build_params(values)
+        if params is None:  # pragma: no cover - selection returned it, so it builds
+            continue
+        validation_metrics = _evaluate(
+            validation, symbol=symbol, timeframe=timeframe, config=settings, params=params
+        )
+        folds.append(
+            WalkForwardFold(
+                window=window,
+                selected=values,
+                train_score=train_score,
+                validation_score=score_objective(validation_metrics),
+                validation_metrics=validation_metrics,
+                candidates_evaluated=evaluated,
+            )
+        )
+
+    mean_validation: Decimal | None = None
+    mean_train: Decimal | None = None
+    if folds:
+        mean_validation = _q(
+            sum((f.validation_score.value for f in folds), _ZERO) / Decimal(len(folds))
+        )
+        mean_train = _q(sum((f.train_score.value for f in folds), _ZERO) / Decimal(len(folds)))
+
+    # How often one parameter set won. A procedure that picks a different
+    # winner every window is describing noise, and a reader should be able to
+    # see that without recomputing it.
+    most_selected: dict[str, Decimal] | None = None
+    most_selected_folds = 0
+    if folds:
+        tally: dict[tuple[tuple[str, Decimal], ...], int] = {}
+        for fold in folds:
+            key = tuple(sorted(fold.selected.items()))
+            tally[key] = tally.get(key, 0) + 1
+        winner = max(sorted(tally), key=lambda k: tally[k])
+        most_selected = dict(winner)
+        most_selected_folds = tally[winner]
+
+        # A "winner" that every fold agreed on looks like convergence, and
+        # when every candidate was rejected it is the exact opposite: the
+        # tie-break picked first-in-order out of a field of zeros. Reporting
+        # the agreement without this would be the most misleading line in the
+        # report, because it reads strongest precisely when it means least.
+        if all(fold.train_score.rejected_reason is not None for fold in folds):
+            warnings.append(
+                "Every candidate was rejected by the objective's gate in every fold, so "
+                "the selections are ties at zero broken by parameter order, not choices. "
+                "Any agreement between folds here is an artefact of that ordering and is "
+                "not evidence of a stable parameter set."
+            )
+        elif most_selected_folds == 1 and len(folds) > 1:
+            warnings.append(
+                "No parameter set won more than one fold. The selection procedure is "
+                "not converging on anything stable over this history, and the mean "
+                "validation score should be read with that in mind."
+            )
+
+    return WalkForwardReport(
+        symbol=symbol.upper(),
+        timeframe=timeframe,
+        strategy=trend_momentum.STRATEGY_KEY,
+        strategy_version=trend_momentum.STRATEGY_VERSION,
+        objective=OBJECTIVE_METHOD,
+        space=tuple(ordered),
+        train_bars=train_bars,
+        validation_bars=validation_bars,
+        step_bars=step_bars if step_bars is not None else validation_bars,
+        folds=tuple(folds),
+        mean_validation_score=mean_validation,
+        mean_train_score=mean_train,
+        most_selected=most_selected,
+        most_selected_folds=most_selected_folds,
+        config=settings,
         ran_at=ran_at,
         warnings=tuple(warnings),
     )

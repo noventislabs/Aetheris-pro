@@ -353,14 +353,23 @@ def test_setup_scoring_states_what_its_number_is_not() -> None:
 
 
 def test_optimisation_is_partial_and_names_what_is_missing() -> None:
-    """Grid search landed; walk-forward driving and an API route did not."""
+    """Walk-forward now drives the search. The remaining gaps are integration.
+
+    The entry used to say walk-forward was "NOT yet driven by the optimizer",
+    which stopped being true when it started driving it. What is still
+    missing is not the capability but the way in: no route, no persistence.
+    Those keep it PARTIAL, because a capability nobody can reach is not one
+    a user has.
+    """
     optimisation = get_capability("optimize.hyperparameters")
     assert optimisation is not None
     assert optimisation.status is CapabilityStatus.PARTIAL
     assert optimisation.status is not CapabilityStatus.AVAILABLE
     assert "train/validation/test" in optimisation.detail
-    assert "NOT yet driven by the optimizer" in optimisation.detail
+    assert "NOT yet driven by the optimizer" not in optimisation.detail
+    assert "walk-forward now DRIVES" in optimisation.detail
     assert "no API route" in optimisation.detail
+    assert "NOT persisted" in optimisation.detail
 
 
 def test_smc_is_still_unbuilt_after_the_strategy_work() -> None:

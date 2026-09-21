@@ -149,6 +149,12 @@ These are enforced by code and tests, not by convention:
   train/validation/test windows enforced by the split type itself. Selection
   reads validation; the test window is scored once afterwards and never
   influences the choice.
+- **Walk-forward evaluation** — rolling folds that drive the search, not just
+  describe it. Each fold selects on its training window alone and is scored on
+  the validation window after it; no fold sees its own validation bars or any
+  later fold. Both bounds are hard: an oversized grid or too many folds is
+  refused rather than truncated, because a truncated run describes an
+  arbitrary prefix of history.
 
 ### Trading
 - **Risk engine** — ordered checks covering mode, emergency stop,
@@ -245,7 +251,7 @@ Nothing below is implemented. None of it is reachable at runtime.
 | **Falcon AI command centre** | Planned, phase 9. No module. |
 | **AI/ML analysis layer** | Planned, phase 9. No model is bundled. |
 | **Smart Money Concepts** | Planned. Not implemented — no SMC module exists. |
-| **Walk-forward optimisation** | Partial. Rolling windows are implemented and tested as a primitive, but the optimizer performs a single three-way split and does not yet drive them. No API route and no stored reports. |
+| **Optimisation reporting** | Partial. Grid search and walk-forward both run and are tested, but there is no API route and reports are returned to the caller rather than persisted. Persisting them would need a schema this build does not have. |
 | **WebSocket streaming** | Not implemented, for market data or fills. |
 | **Authentication and users** | Planned, phase 1. The `users` table exists; Argon2id credentials and sessions do not. |
 | **Portfolio and position accounting** | Planned. |

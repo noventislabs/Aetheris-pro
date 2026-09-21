@@ -217,3 +217,87 @@ class OptimizationReport(BaseModel):
         "results are reported separately from in-sample results precisely because "
         "the two must not be read as one number."
     )
+
+
+class WalkForwardFold(BaseModel):
+    """One window's worth of walk-forward evidence.
+
+    ``selected`` was chosen using the training window **only**. The validation
+    score is then measured on bars the selection never saw. Keeping both on
+    the same object, in separate fields, is what makes the comparison
+    checkable: a fold whose train score is excellent and whose validation
+    score is not is the single most informative row in the report.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    window: WalkForwardWindow
+    selected: dict[str, Decimal]
+    train_score: TrialScore
+    validation_score: TrialScore
+    validation_metrics: BacktestMetrics | None = None
+    #: How many candidates were actually evaluated in this fold. Invalid
+    #: parameter combinations are skipped, so this can be below the grid size.
+    candidates_evaluated: int = Field(default=0, ge=0)
+
+
+class WalkForwardReport(BaseModel):
+    """Rolling out-of-sample evaluation across the whole series.
+
+    ## What this measures, and what it does not
+
+    Each fold selects on its own training window and is then scored on the
+    validation window immediately after it. No fold can see its own
+    validation bars while choosing, and no fold can see any later fold at
+    all. The aggregate is therefore an out-of-sample estimate rather than a
+    description of the search.
+
+    It is still not a prediction. It says how a *procedure* -- this grid,
+    this objective, this rebalancing cadence -- would have behaved over this
+    history. A procedure that held up across folds is better evidence than
+    one that did not; neither is a forecast, and a report with two folds is
+    barely evidence at all, which is why ``folds`` is reported rather than
+    averaged away.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    symbol: str
+    timeframe: Timeframe
+    strategy: str
+    strategy_version: str
+    objective: str
+    space: tuple[ParameterSpec, ...]
+
+    train_bars: int = Field(ge=1)
+    validation_bars: int = Field(ge=1)
+    step_bars: int = Field(ge=1)
+    folds: tuple[WalkForwardFold, ...] = ()
+
+    #: Mean validation score across folds. ``None`` when there were no folds:
+    #: an empty mean is not zero.
+    mean_validation_score: Decimal | None = None
+    #: Mean train score, reported beside it so the gap between them is
+    #: visible rather than something a reader has to compute.
+    mean_train_score: Decimal | None = None
+    #: How often the most frequently selected parameter set won a fold. A
+    #: procedure that picks a different winner every window is describing
+    #: noise, and this is the cheapest way to see that.
+    most_selected: dict[str, Decimal] | None = None
+    most_selected_folds: int = Field(default=0, ge=0)
+
+    config: BacktestConfig
+    ran_at: datetime | None = None
+    warnings: tuple[str, ...] = ()
+
+    disclaimer: str = (
+        "A walk-forward report describes how a selection procedure would have "
+        "behaved over specific historical windows under stated assumptions. It is "
+        "not evidence that the procedure is profitable in future, and the mean "
+        "validation score is an average over a small number of folds, not an "
+        "expected return."
+    )
+
+    @property
+    def fold_count(self) -> int:
+        return len(self.folds)
