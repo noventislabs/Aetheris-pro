@@ -420,9 +420,13 @@ CAPABILITIES: tuple[Capability, ...] = (
             "after the venue CONFIRMS the approved leverage and ISOLATED margin -- a "
             "mismatch refuses. An unknown exchange ceiling refuses. Orders that vanish "
             "wholesale from the venue are treated as a reset condition needing human "
-            "review, never converted into a guessed terminal state. PARTIAL: no "
-            "autonomous testnet trading, no websocket fills, and completion requires an "
-            "opt-in run against real testnet credentials."
+            "review, never converted into a guessed terminal state. PARTIAL, and these "
+            "are the gaps: there is NO reduce-only flag, NO venue-side protective "
+            "stop-loss or take-profit order, and NO partial close -- a position is "
+            "opened or fully closed, and protective levels live in the risk engine "
+            "rather than resting at the venue, so they are not enforced if this process "
+            "stops. There is also no autonomous testnet trading and no websocket fills, "
+            "and completion requires an opt-in run against real testnet credentials."
         ),
     ),
     Capability(

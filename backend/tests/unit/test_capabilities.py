@@ -386,6 +386,22 @@ def test_optimisation_is_partial_and_names_what_is_missing() -> None:
     assert "NOT persisted" in optimisation.detail
 
 
+def test_testnet_names_the_order_types_it_does_not_have() -> None:
+    """The gaps an operator would otherwise discover by placing a trade.
+
+    Protective levels live in the risk engine, not at the venue, so they stop
+    being enforced the moment this process does. That is the kind of thing a
+    capability entry has to say out loud rather than leave to be inferred
+    from the absence of a field.
+    """
+    testnet = get_capability("execution.testnet")
+    assert testnet is not None
+    assert testnet.status is CapabilityStatus.PARTIAL
+    assert "NO reduce-only" in testnet.detail
+    assert "NO partial close" in testnet.detail
+    assert "not enforced if this process stops" in testnet.detail
+
+
 def test_smc_is_still_unbuilt_after_the_strategy_work() -> None:
     """Scoring and regime are not structure analysis, however adjacent."""
     smc = get_capability("analysis.smc")

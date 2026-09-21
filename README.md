@@ -240,6 +240,11 @@ These are real constraints of the current build, not opinions about it:
 - **Autonomous trading is paper-only.** There is no autonomous testnet trading.
 - **Testnet fills are not streamed.** Order state is read back by query, not
   pushed.
+- **Testnet has no reduce-only, no venue-side protective orders and no partial
+  close.** A position is opened or fully closed. Stop-loss and take-profit
+  levels live in the risk engine rather than resting at the venue, so they are
+  **not enforced if this process stops** — the position stays open until
+  something here acts on it.
 - **Market orders only** in the paper engine; limit orders and partial fills
   are not implemented there.
 - **Paper position management is poll-driven**, via `POST /api/v1/paper/tick`
