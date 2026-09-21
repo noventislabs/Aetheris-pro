@@ -270,7 +270,8 @@ def test_capabilities_report_the_scanner_as_available(client: TestClient) -> Non
     assert by_key["analysis.smc"]["status"] == "PLANNED"
     assert by_key["ai.analysis"]["status"] == "PLANNED"
     # PARTIAL since phase 8a: records are durable in PostgreSQL and a recovery
-    # pass runs at startup. Still not AVAILABLE -- nothing submits anywhere.
+    # pass runs at startup. Still not AVAILABLE -- the retry columns the venue
+    # path needs have no writer.
     assert by_key["order.persistence"]["status"] == "PARTIAL"
     # PARTIAL since phase 8b: signed testnet execution exists. Still not
     # AVAILABLE, and execution.live is still PLANNED and unimplemented.

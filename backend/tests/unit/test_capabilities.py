@@ -82,7 +82,12 @@ def test_durable_order_records_are_storage_and_do_not_imply_execution() -> None:
     # order to deny it, so banning the word would push the entry towards saying
     # less about its own limits.
     assert "still in memory" in persistence.detail
-    assert "nothing submits" in persistence.detail
+    # 8b gave the store a submitter, so "nothing submits" -- the old reason for
+    # withholding AVAILABLE -- became false. The limit it was pointing at is
+    # still real and is what the entry must now name: the retry columns have no
+    # writer, so a failed submission is not picked back up.
+    assert "no writer" in persistence.detail
+    assert "not automatically" in persistence.detail
 
 
 def test_the_order_engine_claims_recovery_only_for_what_is_actually_durable() -> None:
@@ -101,8 +106,12 @@ def test_the_order_engine_claims_recovery_only_for_what_is_actually_durable() ->
     engine = get_capability("order.engine")
     assert engine is not None
     assert engine.status is CapabilityStatus.PARTIAL
-    assert "NO venue" in engine.detail
     assert "does not resolve it" in engine.detail
+    # "NO venue" was true until 8b gave these records one. The boundary did not
+    # disappear, it moved: what must be asserted now is WHICH venue, named
+    # rather than implied, and that live is denied in the same sentence.
+    assert "TESTNET" in engine.detail
+    assert "NO adapter reports LIVE" in engine.detail
     assert "in-memory" in engine.detail  # the paper account, named explicitly
     assert "Paper account state is separate" in engine.detail
 
@@ -139,10 +148,20 @@ def test_paper_state_durability_is_disclosed_as_partial() -> None:
 
 
 def test_the_paper_engine_states_that_it_places_no_real_order() -> None:
+    """The claim is about this engine, not about the whole build.
+
+    It used to justify itself with "no credential exists, and no testnet or
+    live path is wired", which phase 8b falsified -- leaving a true claim
+    resting on three false ones, which is the harder kind of drift to notice.
+    The engine still places no real order. The reason is now its own isolation
+    rather than the absence of any venue anywhere in the system.
+    """
     engine = get_capability("paper.engine")
     assert engine is not None
     assert engine.status is CapabilityStatus.AVAILABLE
     assert "NO real order" in engine.detail
+    assert "no credential exists" not in engine.detail
+    assert "no testnet or live path is wired" not in engine.detail
 
 
 def test_available_capabilities_come_only_from_delivered_phases() -> None:
@@ -194,3 +213,110 @@ def test_indicators_became_available_with_their_implementation() -> None:
     assert capability is not None
     assert capability.status is CapabilityStatus.AVAILABLE
     assert capability.phase == 4
+
+
+def test_database_persistence_is_partial_and_states_all_three_of_its_limits() -> None:
+    """It reported PLANNED, "No database is configured", while 0001-0004 ran.
+
+    Correcting it invites the opposite error, so the entry has to carry three
+    limits at once -- each of them a distinct way a reader could over-trust it:
+    durability is conditional on DATABASE_URL, it covers order records and not
+    the paper account, and phase 1's authentication is still absent.
+    """
+    database = get_capability("persistence.database")
+    assert database is not None
+    assert database.status is CapabilityStatus.PARTIAL
+    assert database.status is not CapabilityStatus.AVAILABLE
+    assert "PostgreSQL" in database.detail
+    assert "0001-0004" in database.detail
+
+    # 1. Conditional on configuration, not unconditional.
+    assert "DATABASE_URL" in database.detail
+    assert "NOT_CONFIGURED" in database.detail
+
+    # 2. Order records, not the paper account. Shouted, because a user reading
+    #    "PostgreSQL persistence" will otherwise assume their balance survives.
+    assert "STILL IN MEMORY" in database.detail
+    assert "RESET ON RESTART" in database.detail
+
+    # 3. Phase 1 is not finished.
+    assert "Argon2id" in database.detail
+
+    # The claim it must never make again.
+    assert "No database is configured" not in database.detail
+
+
+def test_the_registry_does_not_contradict_itself_about_the_database() -> None:
+    """Two entries disagreed about whether a database existed.
+
+    ``persistence.database`` said none was configured and nothing survived a
+    restart, while ``order.persistence`` in the same tuple described orders
+    stored in PostgreSQL behind row-level security. Separate keys, so nothing
+    forced them to agree -- and for two commits they did not.
+    """
+    database = get_capability("persistence.database")
+    orders = get_capability("order.persistence")
+    assert database is not None
+    assert orders is not None
+    assert "PostgreSQL" in database.detail
+    assert "PostgreSQL" in orders.detail
+    assert database.status.is_operational
+    assert orders.status.is_operational
+
+
+def test_exchange_abstraction_names_the_testnet_adapter_and_denies_live() -> None:
+    """It said the trading port was "implemented by nothing" after one landed.
+
+    The risk in fixing this is the opposite error, so the assertion is
+    two-sided: the adapter is named and bounded to the demo host, and LIVE is
+    denied in the same breath rather than merely left unmentioned.
+    """
+    abstraction = get_capability("exchange.abstraction")
+    assert abstraction is not None
+    assert abstraction.status is CapabilityStatus.AVAILABLE
+    assert "implemented by nothing" not in abstraction.detail
+    assert "BinanceTestnetTradingAdapter" in abstraction.detail
+    assert "TESTNET" in abstraction.detail
+    assert "demo-fapi.binance.com" in abstraction.detail
+    assert "NO adapter reports LIVE" in abstraction.detail
+
+    live = get_capability("execution.live")
+    assert live is not None
+    assert live.status is CapabilityStatus.PLANNED
+
+
+def test_shipped_but_unfinished_phases_stay_out_of_delivered_phases() -> None:
+    """Phases 1 and 8 both ship running code and neither is finished.
+
+    DELIVERED_PHASES gates AVAILABLE and nothing else, so the honest way to
+    say "shipped but unfinished" is a PARTIAL capability whose phase is *not*
+    listed. Adding 1 or 8 would change no entry's status and would remove the
+    guard from every future edit in those phases, which is the one thing the
+    list exists to provide.
+    """
+    assert 1 not in DELIVERED_PHASES
+    assert 8 not in DELIVERED_PHASES
+
+    for key in (
+        "persistence.database",
+        "order.engine",
+        "order.persistence",
+        "execution.testnet",
+    ):
+        capability = get_capability(key)
+        assert capability is not None
+        assert capability.phase not in DELIVERED_PHASES
+        assert capability.status is CapabilityStatus.PARTIAL, (
+            f"{key} sits in an undelivered phase and must not claim AVAILABLE"
+        )
+
+
+def test_phase_nine_is_not_claimed_in_any_form() -> None:
+    """Nothing in phase 9 is built, and no entry may suggest otherwise."""
+    assert 9 not in DELIVERED_PHASES
+    phase_nine = [c for c in CAPABILITIES if c.phase == 9]
+    assert phase_nine, "phase 9 entries disappeared from the registry"
+    for capability in phase_nine:
+        assert capability.status is CapabilityStatus.PLANNED, (
+            f"{capability.key} claims {capability.status} but phase 9 is not started"
+        )

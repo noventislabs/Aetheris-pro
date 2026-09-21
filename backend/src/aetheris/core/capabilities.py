@@ -30,6 +30,13 @@ class CapabilityStatus(StrEnum):
 #: Phases whose work is merged and tested. A capability may only be marked
 #: AVAILABLE if its phase appears here, which keeps the registry from
 #: drifting ahead of delivery one optimistic edit at a time.
+#:
+#: It gates AVAILABLE and nothing else, so a phase that shipped real code but
+#: is not finished stays out. Phases 1 and 8 are both in that position: each
+#: has running code and each holds PARTIAL capabilities that state how far it
+#: actually goes. Listing them would not make the registry more accurate -- no
+#: entry's status would change -- it would only remove this guard from every
+#: future edit in those phases.
 DELIVERED_PHASES: frozenset[int] = frozenset({0, 2, 3, 4, 5, 6, 7})
 
 
@@ -77,9 +84,21 @@ CAPABILITIES: tuple[Capability, ...] = (
     Capability(
         key="persistence.database",
         name="PostgreSQL persistence and migrations",
-        status=CapabilityStatus.PLANNED,
+        status=CapabilityStatus.PARTIAL,
         phase=1,
-        detail="No database is configured in this build; nothing is persisted across restarts.",
+        detail=(
+            "PostgreSQL persistence and Alembic migrations 0001-0004 are implemented: "
+            "users, accounts, orders, order_fills and order_discrepancies, with "
+            "NUMERIC(24,8) money, timestamptz time and row-level security. Durability is "
+            "CONDITIONAL on configuration: without DATABASE_URL there is no store at all "
+            "-- readiness reports NOT_CONFIGURED, the order lifecycle is absent, and "
+            "nothing claims crash recovery. There is deliberately no in-memory fallback. "
+            "Scope is order records and the accounts they belong to: the PAPER ACCOUNT "
+            "BALANCE, POSITIONS, DAY SESSION AND EMERGENCY-STOP FLAG ARE STILL IN MEMORY "
+            "AND STILL RESET ON RESTART. PARTIAL, not AVAILABLE: phase 1's authentication "
+            "is not built -- the users table exists, Argon2id credentials and sessions "
+            "do not."
+        ),
     ),
     Capability(
         key="exchange.abstraction",
@@ -87,8 +106,10 @@ CAPABILITIES: tuple[Capability, ...] = (
         status=CapabilityStatus.AVAILABLE,
         phase=2,
         detail=(
-            "MarketDataPort defines read-only venue access. The trading port is "
-            "declared as a type only and implemented by nothing."
+            "MarketDataPort defines read-only venue access. TradingPort is implemented "
+            "by BinanceTestnetTradingAdapter alone, which reports TESTNET and reaches "
+            "demo-fapi.binance.com only. NO adapter reports LIVE, and an architecture "
+            "test asserts that none does."
         ),
     ),
     Capability(
@@ -224,8 +245,9 @@ CAPABILITIES: tuple[Capability, ...] = (
         detail=(
             "Simulated orders, fills, fees, positions and PnL against real public "
             "market data. Every entry passes a risk gate that returns a named "
-            "RISK_REJECTED_* code. Places NO real order: no venue order endpoint is "
-            "reachable, no credential exists, and no testnet or live path is wired. "
+            "RISK_REJECTED_* code. Places NO real order: the paper engine has no venue "
+            "path of any kind, and testnet execution is a separate service, route and "
+            "switch that this engine cannot reach. "
             "Fills are all-or-nothing and management is poll-driven."
         ),
     ),
@@ -301,9 +323,10 @@ CAPABILITIES: tuple[Capability, ...] = (
             "when the process stopped are moved to UNKNOWN, orders that never left are "
             "left alone, and orders that cannot be read are recorded as discrepancies "
             "and block new entries. Recovery **states the uncertainty; it does not "
-            "resolve it** -- resolving needs venue evidence, and this reaches NO venue: "
-            "nothing implements the trading port. Paper account state is separate and "
-            "is still in-memory."
+            "resolve it** -- resolving needs venue evidence, which only a query against "
+            "the venue supplies. The one venue these records reach is TESTNET, at "
+            "demo-fapi.binance.com; NO adapter reports LIVE. Paper account state is "
+            "separate and is still in-memory."
         ),
     ),
     Capability(
@@ -319,8 +342,9 @@ CAPABILITIES: tuple[Capability, ...] = (
             "instead of creating a second one. Applies to order records only: the paper "
             "account balance and positions are still in memory and say so. PARTIAL, not "
             "AVAILABLE: the submission-retry state a venue path needs "
-            "(submission_attempts, next_retry_at) has columns but nothing writes them "
-            "yet, because nothing submits."
+            "(submission_attempts, next_retry_at) has columns but no writer. The testnet "
+            "path submits without them, so a submission that fails is not automatically "
+            "retried."
         ),
     ),
     Capability(

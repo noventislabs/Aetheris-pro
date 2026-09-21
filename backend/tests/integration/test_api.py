@@ -126,13 +126,34 @@ def test_capabilities_endpoint_lists_planned_work(client: TestClient) -> None:
     capabilities = client.get("/api/v1/system/capabilities").json()["capabilities"]
     by_key = {c["key"]: c for c in capabilities}
     # PARTIAL since phase 8a: records are durable in PostgreSQL and a recovery
-    # pass runs at startup. Still not AVAILABLE -- nothing submits anywhere.
+    # pass runs at startup. Still not AVAILABLE -- the retry columns the venue
+    # path needs have no writer.
     assert by_key["order.persistence"]["status"] == "PARTIAL"
     # PARTIAL since phase 8b: signed testnet execution exists. Still not
     # AVAILABLE, and execution.live is still PLANNED and unimplemented.
     assert by_key["execution.testnet"]["status"] == "PARTIAL"
     assert by_key["execution.live"]["status"] == "PLANNED"
     assert by_key["core.money"]["status"] == "AVAILABLE"
+
+    # The database served PLANNED with "No database is configured in this
+    # build" for two commits after migrations 0001-0004 were running. Asserted
+    # here as well as in the unit tests because this is the copy clients read.
+    database = by_key["persistence.database"]
+    assert database["status"] == "PARTIAL"
+    assert "No database is configured" not in database["detail"]
+    assert "PostgreSQL" in database["detail"]
+    assert "STILL IN MEMORY" in database["detail"]
+
+    # Same drift, other direction: the port had an implementation while the
+    # registry still told clients it had none.
+    abstraction = by_key["exchange.abstraction"]
+    assert "implemented by nothing" not in abstraction["detail"]
+    assert "BinanceTestnetTradingAdapter" in abstraction["detail"]
+    assert "NO adapter reports LIVE" in abstraction["detail"]
+
+    # Whatever else moves, nothing may announce phase 9 or a live venue.
+    assert by_key["ai.analysis"]["status"] == "PLANNED"
+    assert by_key["falcon.command_center"]["status"] == "PLANNED"
 
 
 def test_unknown_route_returns_the_error_envelope(client: TestClient) -> None:
