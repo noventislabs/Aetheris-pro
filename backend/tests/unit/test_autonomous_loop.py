@@ -505,9 +505,19 @@ async def test_every_decision_is_labelled_a_simulation() -> None:
 
 
 async def test_a_daily_lock_blocks_autonomous_entries() -> None:
+    """The lock must hold against the clock the loop actually reads.
+
+    Seeded with ``utcnow()`` rather than the fixture's fixed ``NOW``. The
+    loop stamps its own run from the real clock, and the engine correctly
+    rolls a fresh session when the UTC date changes -- a lock that survived
+    midnight would be a permanent stop wearing a daily name. Seeding
+    yesterday's date therefore hands the loop a session it is right to
+    discard, and the test fails for a reason that has nothing to do with
+    what it is checking. It passed only on the calendar day ``NOW`` names.
+    """
     loop, _market, engine, _paper = build()
     state = engine._repository.load()
-    engine._ensure_session(state, NOW)
+    engine._ensure_session(state, utcnow())
     assert state.session is not None
     state.session.realized_pnl = Decimal(-50)
     state.session.lock_state = __import__(
