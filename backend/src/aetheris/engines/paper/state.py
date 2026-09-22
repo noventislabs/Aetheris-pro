@@ -18,6 +18,7 @@ from aetheris.domain.paper import (
     PaperTrade,
     RiskLockState,
 )
+from aetheris.domain.thesis import PositionThesis
 
 
 @dataclass(slots=True)
@@ -44,6 +45,19 @@ class MutablePosition:
     mark_price: Decimal | None = None
     mark_source: str | None = None
     mark_status: str | None = None
+
+    #: Why this position was opened, recorded once at entry and never
+    #: updated. Optional only so a snapshot written before schema 2 can
+    #: still be loaded by the code path that refuses it; every position
+    #: created by this build has one.
+    thesis: PositionThesis | None = None
+
+    #: Excursion extremes, accumulated from observed marks while the
+    #: position is open. Never back-derived: a value that was not seen
+    #: while the position was live is not an excursion, and computing one
+    #: from later candles would be hindsight.
+    best_price: Decimal | None = None
+    worst_price: Decimal | None = None
 
 
 @dataclass(slots=True)

@@ -32,6 +32,7 @@ from decimal import Decimal
 from typing import Any, Final
 
 from aetheris.domain.paper import PaperOrder, PaperTrade, RiskLockState
+from aetheris.domain.thesis import PositionThesis
 from aetheris.engines.paper.state import MutablePosition, MutableSession, PaperState
 
 __all__ = ["SCHEMA_VERSION", "SnapshotSchemaMismatch", "from_snapshot", "to_snapshot"]
@@ -39,7 +40,13 @@ __all__ = ["SCHEMA_VERSION", "SnapshotSchemaMismatch", "from_snapshot", "to_snap
 #: Bump whenever the shape below changes. A snapshot written under a different
 #: version is refused, never partially applied: a half-restored account would
 #: report a balance that no sequence of trades produced.
-SCHEMA_VERSION: Final = 1
+#:
+#: v2 added the original trade thesis and the observed excursion extremes. A v1
+#: snapshot is refused rather than loaded with those absent, because the
+#: intelligence layer reads a missing thesis as evidence that no rule set was
+#: involved -- which is a claim about the trade, not about the record. Silently
+#: restoring old positions would make that claim on their behalf.
+SCHEMA_VERSION: Final = 2
 
 
 class SnapshotSchemaMismatch(ValueError):
@@ -84,6 +91,9 @@ def _position_out(position: MutablePosition) -> dict[str, Any]:
         "mark_price": _dec(position.mark_price),
         "mark_source": position.mark_source,
         "mark_status": position.mark_status,
+        "best_price": _dec(position.best_price),
+        "worst_price": _dec(position.worst_price),
+        "thesis": (None if position.thesis is None else position.thesis.model_dump(mode="json")),
     }
 
 
@@ -128,6 +138,11 @@ def _position_in(raw: dict[str, Any]) -> MutablePosition:
         mark_price=_undec(raw.get("mark_price")),
         mark_source=raw.get("mark_source"),
         mark_status=raw.get("mark_status"),
+        best_price=_undec(raw.get("best_price")),
+        worst_price=_undec(raw.get("worst_price")),
+        thesis=(
+            PositionThesis.model_validate(raw["thesis"]) if raw.get("thesis") is not None else None
+        ),
     )
 
 

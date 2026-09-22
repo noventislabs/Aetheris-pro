@@ -24,6 +24,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from aetheris.core.errors import RiskRejectionCode
 from aetheris.domain.enums import OrderSide, OrderState, OrderType, PositionSide, TradingMode
 from aetheris.domain.leverage import LeverageDecision
+from aetheris.domain.thesis import PositionThesis
 
 
 class PaperExitReason(StrEnum):
@@ -164,6 +165,18 @@ class PaperPosition(BaseModel):
     mark_source: str | None = None
     mark_status: str | None = None
     unrealized_pnl: Decimal | None = None
+
+    #: Why this position was opened, recorded at entry and never updated.
+    #: ``None`` only for a position restored from a snapshot written before
+    #: theses existed; every position this build opens carries one.
+    thesis: PositionThesis | None = None
+
+    #: Best and worst prices actually observed while the position was open,
+    #: in the direction that matters for its side. Raw prices rather than
+    #: signed excursions, so the sign convention is applied once by the
+    #: reader that knows the side rather than at every call site.
+    best_price: Decimal | None = None
+    worst_price: Decimal | None = None
 
 
 class PaperTrade(BaseModel):

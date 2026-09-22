@@ -60,6 +60,7 @@ from aetheris.domain.paper import (
     ReconciliationReport,
     RiskLockState,
 )
+from aetheris.domain.thesis import PositionThesis, StrategyContext, ThesisStatus
 from aetheris.engines.paper.risk import (
     RiskRefusal,
     check_authority,
@@ -179,6 +180,10 @@ class SubmitOrderRequest:
     take_profit_percent: Decimal | None = None
     trailing_stop_percent: Decimal | None = None
     client_order_id: str | None = None
+    #: What a rule set knew when it proposed this, when one did. Supplied
+    #: by the caller; the engine has no strategy evaluation of its own and
+    #: must never invent one. ``None`` means a human submitted it.
+    strategy_context: StrategyContext | None = None
 
 
 def _fill_price(
@@ -217,6 +222,99 @@ def _liquidation_price(entry: Decimal, leverage: Decimal, *, is_long: bool) -> D
     move = entry / leverage
     level = (entry - move) if is_long else (entry + move)
     return level if level > ZERO else None
+
+
+def _record_excursion(position: MutablePosition, price: Decimal) -> None:
+    """Widen the observed excursion extremes with one real mark.
+
+    Only ever widens, and only from prices actually observed while the
+    position was open. MFE and MAE computed from a later candle series would
+    be hindsight -- they would describe what the market did, not what this
+    position lived through.
+
+    "Best" and "worst" are relative to the side, which is why they are stored
+    as raw prices rather than as signed excursions: the sign convention is
+    applied once, where the side is known, instead of at every reader.
+    """
+    if price <= ZERO:
+        return
+    is_long = position.side == PositionSide.LONG.value
+
+    if (
+        position.best_price is None
+        or (is_long and price > position.best_price)
+        or (not is_long and price < position.best_price)
+    ):
+        position.best_price = price
+
+    if (
+        position.worst_price is None
+        or (is_long and price < position.worst_price)
+        or (not is_long and price > position.worst_price)
+    ):
+        position.worst_price = price
+
+
+def _capture_thesis(
+    request: SubmitOrderRequest,
+    *,
+    side: PositionSide,
+    entry_price: Decimal,
+    stop: Decimal | None,
+    target: Decimal | None,
+    quantity: Decimal,
+    now: datetime,
+) -> PositionThesis:
+    """Write down why this position is being opened, at the moment it opens.
+
+    Recomputing this later would answer a different question -- "would we open
+    this now?" -- using bars that did not exist when the decision was made. So
+    it is recorded once here and never updated.
+
+    A manual entry gets NO_STRATEGY_CONTEXT rather than an empty CAPTURED
+    thesis. The price levels are still recorded, because those are facts about
+    the position; the strategy fields are genuinely absent, and inventing a
+    rule set for a human's click would fabricate the exact evidence the
+    intelligence layer later reasons over.
+    """
+    risk_per_unit = abs(entry_price - stop) if stop is not None else None
+    if risk_per_unit is not None and risk_per_unit <= ZERO:
+        risk_per_unit = None
+    reward_per_unit = abs(target - entry_price) if target is not None else None
+    if reward_per_unit is not None and reward_per_unit <= ZERO:
+        reward_per_unit = None
+
+    ratio: Decimal | None = None
+    if risk_per_unit is not None and reward_per_unit is not None:
+        ratio = reward_per_unit / risk_per_unit
+
+    total_risk = quantize_usdt(risk_per_unit * quantity) if risk_per_unit is not None else None
+    if total_risk is not None and total_risk <= ZERO:
+        total_risk = None
+
+    context = request.strategy_context
+    return PositionThesis(
+        status=(ThesisStatus.CAPTURED if context is not None else ThesisStatus.NO_STRATEGY_CONTEXT),
+        captured_at=now,
+        side=side,
+        entry_price=entry_price,
+        stop_price=stop,
+        target_price=target,
+        planned_risk_per_unit=risk_per_unit,
+        planned_risk_total=total_risk,
+        planned_reward_per_unit=reward_per_unit,
+        risk_reward_ratio=ratio,
+        strategy=context,
+        detail=(
+            None
+            if context is not None
+            else (
+                "Submitted directly, with no rule set behind it. Strategy fields are "
+                "absent rather than zero, and thesis alignment cannot be measured for "
+                "this position."
+            )
+        ),
+    )
 
 
 class PaperEngine:
@@ -611,6 +709,11 @@ class PaperEngine:
             position.mark_source = mark.source
             position.mark_status = mark.status.value
             position.updated_at = now
+            # Recorded before any exit is evaluated, so the mark that
+            # closed a position still counts as an observation. Recording
+            # it afterwards would silently drop the most extreme bar of
+            # every losing trade.
+            _record_excursion(position, mark.last_price)
 
             reason = self._triggered_exit(position, mark.last_price)
             if reason is not None:
@@ -919,6 +1022,19 @@ class PaperEngine:
             mark_price=price,
             mark_source=price_source,
             mark_status=DataStatus.OK.value,
+            thesis=_capture_thesis(
+                request,
+                side=PositionSide.LONG if is_long else PositionSide.SHORT,
+                entry_price=price,
+                stop=stop,
+                target=target,
+                quantity=quantity,
+                now=now,
+            ),
+            # The entry price is the only excursion observed so far, and it
+            # is genuinely both the best and the worst seen.
+            best_price=price,
+            worst_price=price,
         )
         state.positions[symbol] = position
 
@@ -1243,6 +1359,9 @@ class PaperEngine:
             mark_source=mark_source,
             mark_status=mark_status,
             unrealized_pnl=unrealized,
+            thesis=position.thesis,
+            best_price=position.best_price,
+            worst_price=position.worst_price,
         )
 
     def _build_account(

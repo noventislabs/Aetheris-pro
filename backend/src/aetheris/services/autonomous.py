@@ -56,6 +56,7 @@ from aetheris.domain.leverage import LeverageDecision
 from aetheris.domain.market import Candle, Symbol
 from aetheris.domain.paper import PaperAccount, PaperExitReason
 from aetheris.domain.strategy import StrategyBias, StrategyResult, StrategyStatus
+from aetheris.domain.thesis import StrategyContext
 from aetheris.engines.paper.engine import SubmitOrderRequest
 from aetheris.services.market_data import MarketDataService
 from aetheris.services.paper import PaperTradingService
@@ -573,6 +574,25 @@ class AutonomousLoop:
                 take_profit_percent=self._config.take_profit_percent,
                 trailing_stop_percent=self._config.trailing_stop_percent,
                 client_order_id=client_order_id,
+                # The rule set that produced this entry, recorded so the
+                # position can later be asked whether its reason still holds.
+                # Taken from the evaluation that actually decided, not
+                # recomputed -- a thesis rebuilt later would be answering a
+                # different question with bars that did not exist yet.
+                strategy_context=StrategyContext(
+                    strategy_id=result.strategy,
+                    strategy_version=result.version,
+                    timeframe=result.timeframe,
+                    entry_conditions=(
+                        result.long_conditions
+                        if result.bias is StrategyBias.LONG_BIAS
+                        else result.short_conditions
+                    ),
+                    data_source=result.source,
+                    data_status=result.data_status,
+                    data_age_seconds=result.data_age_seconds,
+                    bar_close_time=bar_close,
+                ),
             ),
             requested_leverage=self._config.requested_leverage,
             origin=AUTONOMOUS_ORIGIN,
