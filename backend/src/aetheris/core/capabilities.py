@@ -243,6 +243,24 @@ CAPABILITIES: tuple[Capability, ...] = (
         ),
     ),
     Capability(
+        key="position.intelligence",
+        name="Multi-brain position intelligence",
+        status=CapabilityStatus.PARTIAL,
+        phase=4,
+        detail=(
+            "Eight brains and a deterministic ladder answer one question about an open "
+            "position: does the reason it was opened still hold? The thesis is captured "
+            "at entry and never recomputed, so the answer cannot be built from bars "
+            "that did not exist at the time. Profit is not an input -- a profitable "
+            "position with an intact thesis returns HOLD. ADVISORY ONLY: it places no "
+            "order, moves no stop, changes no leverage and adds no margin, and it runs "
+            "in PAPER only. PARTIAL: the STRUCTURE/SMC brain is UNAVAILABLE because SMC "
+            "is not built, PARTIAL_EXIT is in the vocabulary but no engine can execute "
+            "one, there is no API route, and autonomous testnet position management "
+            "does not exist."
+        ),
+    ),
+    Capability(
         key="strategy.engine",
         name="Strategy analysis engine",
         status=CapabilityStatus.AVAILABLE,
@@ -421,12 +439,15 @@ CAPABILITIES: tuple[Capability, ...] = (
             "mismatch refuses. An unknown exchange ceiling refuses. Orders that vanish "
             "wholesale from the venue are treated as a reset condition needing human "
             "review, never converted into a guessed terminal state. PARTIAL, and these "
-            "are the gaps: there is NO reduce-only flag, NO venue-side protective "
-            "stop-loss or take-profit order, and NO partial close -- a position is "
-            "opened or fully closed, and protective levels live in the risk engine "
-            "rather than resting at the venue, so they are not enforced if this process "
-            "stops. There is also no autonomous testnet trading and no websocket fills, "
-            "and completion requires an opt-in run against real testnet credentials."
+            "are the gaps: THERE IS NO CLOSE OPERATION AT ALL -- the service can submit, "
+            "query, cancel and reconcile, but it cannot exit a position, so nothing "
+            "here ever sets reduce-only even though the domain, the persistence layer, "
+            "the paper close paths and this adapter all support it. There is also no "
+            "venue-side protective stop-loss or take-profit order and no partial close, "
+            "so protective levels live in the risk engine rather than resting at the "
+            "venue and are not enforced if this process stops. No autonomous testnet "
+            "trading, no websocket fills, and completion requires an opt-in run against "
+            "real testnet credentials."
         ),
     ),
     Capability(

@@ -56,7 +56,7 @@ def test_testnet_execution_is_partial_and_does_not_imply_live() -> None:
     assert testnet.status is CapabilityStatus.PARTIAL
     assert "TESTNET only" in testnet.detail
     assert "demo-fapi.binance.com" in testnet.detail
-    assert "no autonomous testnet trading" in testnet.detail
+    assert "No autonomous testnet trading" in testnet.detail
 
     live = get_capability("execution.live")
     assert live is not None
@@ -387,19 +387,36 @@ def test_optimisation_is_partial_and_names_what_is_missing() -> None:
 
 
 def test_testnet_names_the_order_types_it_does_not_have() -> None:
-    """The gaps an operator would otherwise discover by placing a trade.
+    """The gap an operator would otherwise discover by placing a trade.
 
-    Protective levels live in the risk engine, not at the venue, so they stop
-    being enforced the moment this process does. That is the kind of thing a
-    capability entry has to say out loud rather than leave to be inferred
-    from the absence of a field.
+    An earlier version of this entry said testnet lacked reduce-only. That
+    was wrong: reduce_only is wired through the domain, the persistence
+    layer, the paper close paths and the adapter, which sends reduceOnly=true.
+    The real gap is that the testnet service has no close operation at all,
+    so nothing on that path ever sets it -- and protective levels stay in the
+    risk engine, where they stop being enforced the moment this process does.
     """
     testnet = get_capability("execution.testnet")
     assert testnet is not None
     assert testnet.status is CapabilityStatus.PARTIAL
-    assert "NO reduce-only" in testnet.detail
-    assert "NO partial close" in testnet.detail
+    assert "NO CLOSE OPERATION AT ALL" in testnet.detail
+    assert "no partial close" in testnet.detail
     assert "not enforced if this process stops" in testnet.detail
+    # The correction itself: the entry must not claim reduce-only is missing.
+    assert "NO reduce-only" not in testnet.detail
+
+
+def test_position_intelligence_is_advisory_and_paper_only() -> None:
+    """A brain that could place an order would be a different product."""
+    mpi = get_capability("position.intelligence")
+    assert mpi is not None
+    assert mpi.status is CapabilityStatus.PARTIAL
+    assert "ADVISORY ONLY" in mpi.detail
+    assert "places no order" in mpi.detail
+    assert "PAPER only" in mpi.detail
+    # And it must keep naming what it cannot do.
+    assert "STRUCTURE/SMC brain is UNAVAILABLE" in mpi.detail
+    assert "PARTIAL_EXIT" in mpi.detail
 
 
 def test_smc_is_still_unbuilt_after_the_strategy_work() -> None:

@@ -240,11 +240,17 @@ These are real constraints of the current build, not opinions about it:
 - **Autonomous trading is paper-only.** There is no autonomous testnet trading.
 - **Testnet fills are not streamed.** Order state is read back by query, not
   pushed.
-- **Testnet has no reduce-only, no venue-side protective orders and no partial
-  close.** A position is opened or fully closed. Stop-loss and take-profit
-  levels live in the risk engine rather than resting at the venue, so they are
-  **not enforced if this process stops** — the position stays open until
-  something here acts on it.
+- **Testnet has no close operation.** The service can submit, query, cancel and
+  reconcile — it cannot exit a position. `reduce_only` itself *is* supported
+  end to end (domain, persistence, paper close paths and the adapter), but
+  nothing on the testnet path ever sets it, because nothing there closes.
+  There is also no venue-side protective stop-loss or take-profit and no
+  partial close, so protective levels live in the risk engine rather than
+  resting at the venue and are **not enforced if this process stops**.
+- **Position intelligence is advisory and paper-only.** It reads a position,
+  its recorded thesis and observed market data, and returns a decision. It
+  places no order, moves no stop and changes no leverage. Autonomous testnet
+  position management does not exist.
 - **Market orders only** in the paper engine; limit orders and partial fills
   are not implemented there.
 - **Paper position management is poll-driven**, via `POST /api/v1/paper/tick`

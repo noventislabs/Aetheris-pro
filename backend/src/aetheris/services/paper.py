@@ -30,6 +30,7 @@ writes would make the terminal stutter whenever the loop is working.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Sequence
 from dataclasses import replace
 from datetime import datetime
 from decimal import Decimal
@@ -38,6 +39,10 @@ from typing import Final
 from aetheris.adapters.exchange.errors import SymbolNotFoundError
 from aetheris.adapters.persistence.paper import PostgresPaperSnapshotStore
 from aetheris.analysis.indicators.prepare import prepare_candles
+from aetheris.analysis.position.brains import PositionObservation
+from aetheris.analysis.position.metrics import compute_position_metrics
+from aetheris.analysis.position.orchestrator import evaluate_position
+from aetheris.analysis.regime import classify_regime
 from aetheris.analysis.volatility import (
     VolatilityMeasurement,
     VolatilityStatus,
@@ -48,12 +53,13 @@ from aetheris.core.errors import AetherisError
 from aetheris.core.freshness import DataStatus, Observation, utcnow
 from aetheris.core.money import ZERO, quantize_usdt
 from aetheris.domain.enums import Timeframe, TradingMode
+from aetheris.domain.intelligence import PositionIntelligence
 from aetheris.domain.leverage import (
     LeverageDecision,
     LeverageOutcome,
     LeverageReason,
 )
-from aetheris.domain.market import Symbol, Ticker
+from aetheris.domain.market import Candle, Symbol, Ticker
 from aetheris.domain.paper import (
     Durability,
     PaperAccount,
@@ -62,6 +68,7 @@ from aetheris.domain.paper import (
     PaperTrade,
     ReconciliationReport,
 )
+from aetheris.domain.regime import RegimeAssessment
 from aetheris.engines.order.engine import OrderLifecycleEngine, ReconciliationPending
 from aetheris.engines.paper.engine import (
     MarkPrice,
@@ -84,6 +91,14 @@ __all__ = ["MANUAL_RISK_CANDLES", "PaperTradingService"]
 #: quota on history nothing reads (ADR 0006 §L).
 MANUAL_RISK_CANDLES: Final = 60
 MANUAL_RISK_TIMEFRAME: Final = Timeframe.M15
+
+#: Candles fetched to evaluate one position's intelligence. Much longer than
+#: the volatility probe needs: the strategy's slowest leg is EMA(55) and the
+#: regime classifier adds Bollinger on top, so a 60-bar window would leave
+#: every brain reporting INSUFFICIENT_DATA and the feature would look broken
+#: rather than starved.
+INTELLIGENCE_CANDLES: Final = 300
+INTELLIGENCE_TIMEFRAME: Final = Timeframe.H1
 
 
 def mark_from_observation(symbol: str, observation: Observation[Ticker]) -> MarkPrice:
@@ -542,6 +557,71 @@ class PaperTradingService:
             unreconciled_orders=pending.count,
             unreconciled_detail=pending.detail,
             last_entry_at=self._last_entry_at.get(symbol),
+        )
+
+    # ------------------------------------------------------------------
+    # Position intelligence -- read only
+    # ------------------------------------------------------------------
+
+    async def position_intelligence(self, symbol: str) -> PositionIntelligence | None:
+        """Evaluate one open position. Reads; changes nothing.
+
+        ``None`` means there is no open position for that symbol. That is
+        distinct from an evaluation that could not be made, which comes back
+        as a real result whose decision is INSUFFICIENT_DATA.
+
+        **Deliberately outside the write lock**, because it performs no
+        mutation: it reads a frozen account snapshot and derives from it.
+        Taking the lock would let a slow candle fetch stall every order
+        submission behind an advisory read, which is a real cost for no gain.
+        The worst outcome of racing a concurrent mutation is an evaluation one
+        tick stale, and every result carries the timestamp and data age that
+        make that visible.
+
+        Nothing in this call path submits an order, moves a stop, changes
+        leverage, adds margin or opens a position. The orchestrator is pure;
+        this method only assembles its input.
+        """
+        now = utcnow()
+        account = self._engine.snapshot(now=now, marks=await self._open_marks())
+        position = next((p for p in account.positions if p.symbol == symbol.upper()), None)
+        if position is None:
+            return None
+
+        candles: Sequence[Candle] | None = None
+        regime: RegimeAssessment | None = None
+        try:
+            observation = await self._market_data.get_klines(
+                position.symbol, INTELLIGENCE_TIMEFRAME, limit=INTELLIGENCE_CANDLES
+            )
+        except AetherisError:
+            # A brain that cannot see says so. Leaving candles as None makes
+            # the technical and momentum brains report UNAVAILABLE, which the
+            # ladder turns into INSUFFICIENT_DATA rather than a cheerful HOLD.
+            observation = None
+
+        if (
+            observation is not None
+            and observation.value is not None
+            and observation.status is DataStatus.OK
+        ):
+            candles = observation.value.candles
+            regime = classify_regime(candles)
+
+        pending = await self._reconciliation_pending()
+        return evaluate_position(
+            PositionObservation(
+                position=position,
+                metrics=compute_position_metrics(
+                    position, now=now, taker_fee_bps=self._settings.paper.taker_fee_bps
+                ),
+                now=now,
+                candles=candles,
+                regime=regime,
+                risk_lock=account.session.lock_state,
+                risk_lock_reason=account.session.lock_reason,
+                unreconciled_orders=pending.count,
+            )
         )
 
     async def close_position(
